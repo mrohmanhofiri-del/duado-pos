@@ -237,8 +237,47 @@ async function shGo() {
   S.shRes = tot; S.sh = null; vShopee(); toast('Impor selesai');
 }
 
+/* ---------- Pemeriksaan data: kelengkapan master dan kesesuaian stok dengan riwayat ---------- */
+const priceOf = (vid, cid) => { const x = S.data.prices.find(p => p.variant_id === vid && p.channel_id === cid); return x ? Number(x.harga_jual) : null; };
+function checks() {
+  const d = S.data, out = [], add = (lv, title, items, go, hint) => { if (items.length) out.push({lv: lv, title: title, items: items, go: go, hint: hint}); };
+  const hasV = new Set(d.variants.map(v => v.product_id)), usedMat = new Set(d.recipe_items.map(i => i.material_id)), matIds = new Set(d.materials.map(m => m.id));
+  const withPrice = new Set(d.prices.map(p => p.channel_id)), skuCount = {};
+  d.variants.forEach(v => { const k = String(v.sku || '').trim().toLowerCase(); if (k) skuCount[k] = (skuCount[k] || 0) + 1; });
+  add('err', 'Produk belum punya varian (tidak tampil di Kasir)', d.products.filter(p => !hasV.has(p.id)).map(p => p.nama), 'product_variants', 'Tambahkan varian (ukuran dan level pedas).');
+  add('err', 'Varian belum punya harga jual di channel mana pun', d.variants.filter(v => !d.channels.some(c => priceOf(v.id, c.id) != null)).map(vLabel2), 'channel_prices', 'Isi di Data Master, Harga jual.');
+  add('info', 'Varian belum punya harga di channel yang sudah dipakai produk lain', d.variants.flatMap(v => d.channels.filter(c => withPrice.has(c.id) && priceOf(v.id, c.id) == null && d.channels.some(x => priceOf(v.id, x.id) != null)).map(c => vLabel2(v) + ' → ' + c.nama)), 'channel_prices', 'Abaikan jika memang tidak dijual di channel itu.');
+  add('err', 'SKU ganda (merusak impor Shopee dan pencarian)', d.variants.filter(v => skuCount[String(v.sku || '').trim().toLowerCase()] > 1).map(vLabel2), 'product_variants', 'Setiap varian harus punya SKU unik.');
+  add('info', 'Varian belum punya SKU (dibutuhkan untuk impor Shopee)', d.variants.filter(v => !String(v.sku || '').trim()).map(vLabel2), 'product_variants', '');
+  add('err', 'Resep memakai bahan yang sudah dihapus', d.recipes.filter(r => d.recipe_items.some(i => i.recipe_id === r.id && !matIds.has(i.material_id))).map(r => r.nama), 'resep', 'Ganti bahan di resep.');
+  add('err', 'Bahan dipakai resep tetapi HPP masih 0 (HPP produksi tidak akurat)', d.materials.filter(m => usedMat.has(m.id) && !(Number(m.hpp_rata2) > 0)).map(m => m.nama), 'stok', 'Isi lewat Pembelian bahan atau Penyesuaian stok (HPP awal).');
+  add('info', 'Varian belum punya resep (belum bisa diproduksi dari aplikasi)', d.variants.filter(v => !d.recipes.some(r => r.variant_id === v.id)).map(vLabel2), 'resep', 'Abaikan untuk produk yang tidak diproduksi sendiri.');
+  add('info', 'Varian dengan HPP 0 (laba kotor dan margin belum akurat)', d.variants.filter(v => !(Number(v.hpp_rata2) > 0)).map(vLabel2), 'stok', 'Isi HPP awal lewat Stok, atau selesaikan satu produksi.');
+  add('info', 'Produk tanpa kategori', d.products.filter(p => !String(p.kategori || '').trim()).map(p => p.nama), 'products', '');
+  return out;
+}
+const vLabel2 = v => typeof v === 'string' ? v : A.vName(v) + ' ' + A.vSub(v);
+function vCek() {
+  const c = checks(), err = c.filter(x => x.lv === 'err').length;
+  $('#main').innerHTML = '<button class="chip" data-act="tab" data-t="menu">← Menu</button><div class="li" style="display:block;margin-top:8px"><b>Pemeriksaan data</b><p class="muted">Mengecek kelengkapan data master di perangkat ini (sesuai data terakhir yang dimuat). ' + (c.length ? err + ' hal perlu diperbaiki, ' + (c.length - err) + ' catatan.' : 'Semua data lengkap.') + '</p></div>' +
+    c.map(x => '<div class="li" style="display:block"><div class="kv"><b>' + esc(x.title) + '</b><span class="tag ' + (x.lv === 'err' ? 'red' : '') + '">' + (x.lv === 'err' ? 'Perbaiki' : 'Info') + ' · ' + x.items.length + '</span></div>' +
+      '<div class="muted">' + x.items.slice(0, 8).map(esc).join(', ') + (x.items.length > 8 ? ' dan ' + (x.items.length - 8) + ' lainnya' : '') + '</div>' + (x.hint ? '<div class="muted">' + esc(x.hint) + '</div>' : '') +
+      '<button class="chip" style="margin-top:6px" data-act="cekgo" data-t="' + x.go + '">Buka</button></div>').join('') +
+    '<div class="li" style="display:block"><b>Kesesuaian stok</b><p class="muted">Membandingkan stok setiap item dengan jumlah riwayat mutasinya di server. Selisih berarti ada perubahan stok di luar aplikasi (misalnya diedit langsung di Google Sheets).</p><button class="btn sec" data-act="caudit" style="margin-top:0">Periksa stok sekarang</button><div id="caud"></div></div>';
+}
+async function stockAudit() {
+  const el = $('#caud'); el.innerHTML = skel(2);
+  try {
+    const r = await api('stock.audit', {}); if (!$('#caud')) return;
+    $('#caud').innerHTML = '<p class="muted">' + num(r.diperiksa) + ' item diperiksa.</p>' + (r.selisih.length ? r.selisih.map(x => '<div class="li" style="display:block"><div class="kv"><b>' + esc(x.nama) + '</b><span class="tag red">Selisih ' + dec(x.selisih) + '</span></div><div class="muted">Stok tercatat ' + dec(x.stok) + ' · menurut riwayat ' + dec(x.riwayat) + '</div>' +
+      '<button class="chip" data-act="creco" data-t="' + x.tipe + '" data-id="' + esc(x.id) + '">Terima stok tercatat</button> <button class="chip" data-act="adj" data-t="' + x.tipe + '" data-id="' + esc(x.id) + '">Hitung ulang (opname)</button></div>').join('') : '<p style="color:var(--ok);font-weight:800">Semua stok sesuai dengan riwayat.</p>');
+  } catch (e) { if ($('#caud')) $('#caud').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
+}
+
 /* ---------- Aksi ---------- */
 Object.assign(ACT, {
+  caudit: stockAudit, cekgo: el => { const t = el.dataset.t; if (t === 'resep' || t === 'stok') S.tab = t; else { S.mt = t; S.tab = 'master'; } A.render(); },
+  creco: el => busy('Menyelaraskan riwayat…', async () => { try { await api('stock.reconcile', {tipe: el.dataset.t, id: el.dataset.id}); toast('Riwayat disesuaikan'); stockAudit(); } catch (e) { toast(e.message); } }),
   dp: el => { S.dp = el.dataset.p; vDash(); },
   pnew: prodNew, pjenis: el => { S.pform.jenis = el.dataset.j; prodNew(); },
   psave: () => busy('Menyimpan rencana…', async () => { try { await api('production.create', {recipe_id: S.pform.recipe, jumlah_batch: Number(S.pform.batch), jenis: S.pform.jenis, catatan: S.pform.catatan}); closeSheet(); toast('Rencana produksi tersimpan'); vProduksi(); } catch (e) { toast(e.message); } }),
@@ -273,7 +312,7 @@ document.addEventListener('change', e => {
   if (t.id === 'shfile' && t.files && t.files[0]) { const f = t.files[0]; (f.text ? f.text() : new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsText(f); })).then(shLoad); }
   else if (t.dataset && t.dataset.sm) { S.sh.map[t.dataset.sm] = Number(t.value); vShopee(); }
 });
-Object.assign(A.views, {dash: vDash, produksi: vProduksi, resep: vResep, laporan: vLaporan, shopee: vShopee});
+Object.assign(A.views, {dash: vDash, produksi: vProduksi, resep: vResep, laporan: vLaporan, shopee: vShopee, cek: vCek});
 Object.assign(A, {shopeeText: shLoad, parseCSV: parseCSV, parseNum: parseNum, normDate: normDate});
 A.start();
 })();
