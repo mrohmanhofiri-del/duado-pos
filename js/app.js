@@ -4,7 +4,8 @@
 const C = window.CONFIG || {};
 const $ = s => document.querySelector(s);
 const rp = n => 'Rp\u00a0' + Math.round(Number(n) || 0).toLocaleString('id-ID');
-const num = n => Math.round(Number(n) || 0).toLocaleString('id-ID');
+const num = n => { const x = Number(n) || 0; return Number.isInteger(x) ? x.toLocaleString('id-ID') : x.toLocaleString('id-ID', {minimumFractionDigits: 0, maximumFractionDigits: 4}); };
+const parseDec = s => { if (s == null) return 0; if (typeof s === 'number') return isNaN(s) ? 0 : s; const n = parseFloat(String(s).trim().replace(',', '.')); return isNaN(n) ? 0 : n; };
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const LS = {
   get(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (e) { return d; } },
@@ -149,10 +150,61 @@ function escpos(rc) { // byte ESC/POS untuk printer thermal (dikirim lewat RawBT
 const b64 = u8 => { let t = ''; for (let i = 0; i < u8.length; i += 0x8000) t += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(t); };
 function go(url, blank) { const a = document.createElement('a'); a.href = url; if (blank) { a.target = '_blank'; a.rel = 'noopener'; } a.style.display = 'none'; document.body.appendChild(a); a.click(); setTimeout(() => a.remove(), 800); }
 const isAndroid = () => /Android/i.test(navigator.userAgent);
-function printBT(rc) {
+let btDevice = null, btChar = null;
+async function printWebBT(rc) {
+  if (!navigator.bluetooth) return false;
+  try {
+    if (!btDevice || !btDevice.gatt.connected || !btChar) {
+      toast('Mencari printer Bluetooth…');
+      btDevice = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: [
+          '000018f0-0000-1000-8000-00805f9b34fb',
+          'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
+          '49535343-fe7d-4ae5-8fa9-9fafd205e455',
+          '0000ff00-0000-1000-8000-00805f9b34fb',
+          '0000af30-0000-1000-8000-00805f9b34fb'
+        ]
+      });
+      const server = await btDevice.gatt.connect();
+      const services = await server.getPrimaryServices();
+      for (const s of services) {
+        try {
+          const chars = await s.getCharacteristics();
+          for (const c of chars) {
+            if (c.properties.write || c.properties.writeWithoutResponse) { btChar = c; break; }
+          }
+        } catch (x) {}
+        if (btChar) break;
+      }
+    }
+    if (!btChar) throw new Error('Karakteristik cetak tidak ditemukan');
+    const bytes = escpos(rc), chunk = 512;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      const part = bytes.slice(i, i + chunk);
+      if (btChar.properties.writeWithoutResponse) await btChar.writeValueWithoutResponse(part);
+      else await btChar.writeValue(part);
+    }
+    toast('Struk berhasil dicetak via Bluetooth');
+    return true;
+  } catch (e) {
+    if (e.name === 'NotFoundError') return true;
+    console.warn('Web Bluetooth:', e);
+    return false;
+  }
+}
+async function printBT(rc) {
   if (!rc) return toast('Tidak ada struk untuk dicetak');
-  if (!isAndroid()) { toast('Cetak Bluetooth (RawBT) hanya di Android. Memakai cetak browser.'); return printBrowser(); }
-  go('intent:base64,' + b64(escpos(rc)) + '#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;');
+  if (navigator.bluetooth) {
+    const ok = await printWebBT(rc);
+    if (ok) return;
+  }
+  if (isAndroid()) {
+    go('intent:base64,' + b64(escpos(rc)) + '#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;');
+    return;
+  }
+  toast('Di iPhone: gunakan browser Bluefy untuk Bluetooth langsung, atau Cetak Browser.');
+  printBrowser();
 }
 function printBrowser() { const d = document.querySelector('#rtxt'); if (d && d.closest('details')) d.closest('details').open = true; setTimeout(() => window.print(), 60); }
 function waSend(rc, number) {
@@ -360,7 +412,7 @@ function adjSheet(t, id) {
 async function adjSave(t, id) {
   return busy('Menyimpan stok…', async () => {
   try {
-    const r = await api('stock.adjust', {tipe: t, id: id, stok_baru: $('#a_s').value, hpp: $('#a_h').value, alasan: $('#a_r').value});
+    const r = await api('stock.adjust', {tipe: t, id: id, stok_baru: parseDec($('#a_s').value), hpp: $('#a_h').value ? parseDec($('#a_h').value) : '', alasan: $('#a_r').value});
     const it = t === 'bahan' ? S.data.materials.find(m => m.id === id) : vById(id); it.stok = r.stok; it.hpp_rata2 = r.hpp_rata2; LS.set('data', S.data); closeSheet(); render(); toast('Stok disimpan');
   } catch (e) { toast(e.message); }
   });
@@ -416,6 +468,10 @@ const MT = {
 Object.keys(MT).forEach(k => RT[MT[k].k] = MT[k].t);
 function field(f, val) {
   const k = f[0], l = f[1], t = f[2] || '', v = val == null ? '' : val;
+  if (k === 'sku') {
+    return '<div class="f-sku"><label>' + l + '<input class="inp" data-f="sku" value="' + esc(v) + '"></label>' +
+      '<button type="button" class="btn sec btn-sku" data-act="gensku" title="Susun SKU dari nama produk, ukuran, dan level pedas">✨ Auto SKU</button></div>';
+  }
   if (t.indexOf('ref:') === 0) { const key = t.slice(4); return '<label>' + l + '<select class="inp" data-f="' + k + '"><option value="">- pilih -</option>' + S.data[key].map(r => '<option value="' + esc(r.id) + '"' + (r.id === v ? ' selected' : '') + '>' + esc(RT[key](r)) + '</option>').join('') + '</select></label>'; }
   if (t.indexOf('sel:') === 0) return '<label>' + l + '<select class="inp" data-f="' + k + '">' + t.slice(4).split(',').map(o => '<option' + (o === v ? ' selected' : '') + '>' + o + '</option>').join('') + '</select></label>';
   if (t === 'date') return '<label>' + l + '<input type="date" class="inp" data-f="' + k + '" value="' + esc(String(v).slice(0, 10)) + '"></label>';
@@ -424,6 +480,37 @@ function field(f, val) {
     k === 'level_pedas' ? uq((D.variants || []).map(x => x.level_pedas).concat(['Original', 'Level 1', 'Level 2', 'Level 3', 'Level 4', 'Level 5'])) : null;
   return '<label>' + l + '<input class="inp" data-f="' + k + '"' + (sug ? ' list="dl_' + k + '"' : '') + (t === 'number' ? ' inputmode="decimal"' : '') + ' value="' + esc(v) + '">' +
     (sug ? '<datalist id="dl_' + k + '">' + sug.map(x => '<option value="' + esc(x) + '">').join('') + '</datalist>' : '') + '</label>';
+}
+function autoGenSku() {
+  const pidEl = document.querySelector('#sheet [data-f="product_id"]');
+  const ukEl = document.querySelector('#sheet [data-f="ukuran"]');
+  const lvEl = document.querySelector('#sheet [data-f="level_pedas"]');
+  const skuEl = document.querySelector('#sheet [data-f="sku"]');
+  if (!skuEl) return;
+  const p = pidEl ? pById(pidEl.value) : null;
+  const pName = p ? p.nama : '';
+  const uk = ukEl ? ukEl.value.trim() : '';
+  const lv = lvEl ? lvEl.value.trim() : '';
+
+  let pCode = '';
+  if (pName) {
+    const words = pName.replace(/[^a-zA-Z0-9\s]/g, '').trim().split(/\s+/);
+    pCode = words.length > 1 ? words.map(w => w[0]).join('').toUpperCase().slice(0, 4) : pName.slice(0, 3).toUpperCase();
+  } else {
+    pCode = 'PRD';
+  }
+  let ukCode = uk.toUpperCase().replace(/\s+/g, '').replace(/GRAM|GR/, 'G').replace(/KILOGRAM/, 'KG');
+  if (!ukCode) ukCode = 'STD';
+  let lvCode = '';
+  const hn = heatN(lv);
+  if (hn >= 0) lvCode = 'LV' + hn;
+  else if (/ori/i.test(lv)) lvCode = 'ORIG';
+  else if (lv) lvCode = lv.toUpperCase().replace(/\s+/g, '').slice(0, 4);
+  else lvCode = 'LV0';
+
+  const sku = (pCode + '-' + ukCode + '-' + lvCode).toUpperCase();
+  skuEl.value = sku;
+  toast('SKU dibuat: ' + sku);
 }
 function readForm() { const o = {}; document.querySelectorAll('#sheet [data-f]').forEach(e => o[e.dataset.f] = e.type === 'checkbox' ? e.checked : e.value); return o; }
 function vMaster() {
@@ -441,7 +528,7 @@ function meditSheet(id) {
 async function mSave(id) {
   return busy('Menyimpan data…', async () => {
   const data = readForm(); if (id) data.id = id;
-  ['harga_jual', 'fee_persen', 'fee_tetap', 'stok_minimum', 'nominal'].forEach(k => { if (k in data) data[k] = Number(data[k]) || 0; });
+  ['harga_jual', 'fee_persen', 'fee_tetap', 'stok_minimum', 'nominal'].forEach(k => { if (k in data) data[k] = parseDec(data[k]); });
   try { await api('master.save', {table: S.mt, data: data}); S.expLoaded = false; await loadData(); closeSheet(); render(); toast('Tersimpan'); } catch (e) { toast(e.message); }
   });
 }
@@ -501,8 +588,9 @@ const ACT = {
   qdel: el => { if (confirm('Hapus transaksi ini dari antrean? Stok di perangkat akan dikembalikan.')) { const q = S.queue.splice(el.dataset.i, 1)[0]; q.payload.items.forEach(it => { const v = vById(it.variant_id); if (v) v.stok = (Number(v.stok) || 0) + it.qty; }); LS.set('queue', S.queue); LS.set('data', S.data); badge(); vRiwayat(); } },
   stab: el => { S.stab = el.dataset.s; vStok(); },
   adj: el => adjSheet(el.dataset.t, el.dataset.id), adjsave: el => adjSave(el.dataset.t, el.dataset.id),
+  gensku: autoGenSku,
   pbopen: pbSheet, pbdel: el => { S.pb.items.splice(el.dataset.i, 1); pbSheet(); }, pbsave: pbSave,
-  pbadd: () => { const q = Number($('#pb_q').value), h = Number($('#pb_h').value), id = $('#pb_m').value; if (!id || !(q > 0) || !(h >= 0) || $('#pb_h').value === '') return toast('Isi jumlah dan harga'); S.pb.items.push({id: id, qty: q, harga: h}); pbSheet(); },
+  pbadd: () => { const q = parseDec($('#pb_q').value), h = parseDec($('#pb_h').value), id = $('#pb_m').value; if (!id || !(q > 0) || !(h >= 0) || $('#pb_h').value === '') return toast('Isi jumlah dan harga'); S.pb.items.push({id: id, qty: q, harga: h}); pbSheet(); },
   go_master: () => { S.tab = 'master'; render(); }, go_riwayat: () => { S.tab = 'riwayat'; render(); }, go_laporan: () => { S.tab = 'laporan'; render(); }, go_shopee: () => { S.tab = 'shopee'; render(); }, go_resep: () => { S.tab = 'resep'; render(); }, go_cek: () => { S.tab = 'cek'; render(); }, go_users: () => { S.tab = 'users'; render(); }, go_settings: () => { S.tab = 'settings'; render(); },
   mt: el => { S.mt = el.dataset.k; vMaster(); }, medit: el => meditSheet(el.dataset.id), msave: el => mSave(el.dataset.id), mdel: el => mDel(el.dataset.id),
   uedit: el => ueditSheet(el.dataset.id), usave: el => uSave(el.dataset.id), ssave: sSave,
@@ -517,7 +605,16 @@ document.addEventListener('input', e => {
   if (k === 'catatan') { S.catatan = v; return; }
   if (k === 'diskon' || k === 'terima') { v = v.replace(/\D/g, ''); S[k] = v; return upd(); }
 });
-document.addEventListener('change', e => { if (e.target.dataset && e.target.dataset.chg === 'day') { S.day = e.target.value; vRiwayat(); } });
+document.addEventListener('change', e => {
+  if (e.target.dataset && e.target.dataset.chg === 'day') { S.day = e.target.value; vRiwayat(); }
+  if (e.target.dataset && e.target.dataset.f) {
+    const f = e.target.dataset.f;
+    if (f === 'product_id' || f === 'ukuran' || f === 'level_pedas') {
+      const sEl = document.querySelector('#sheet [data-f="sku"]');
+      if (sEl && !sEl.value.trim()) autoGenSku();
+    }
+  }
+});
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && $('#lp') && document.activeElement === $('#lp')) doLogin(); });
 
 /* ---------- Mulai ---------- */
@@ -537,6 +634,6 @@ window.addEventListener('offline', badge);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { checkUpdates(); flush(); if (swReg) swReg.update().catch(() => {}); } });
 function start() { if (S.token && S.data) { S.tab = own() ? 'dash' : 'kasir'; render(); checkUpdates(true); flush(); } else renderLogin(); }
 Object.assign(APP.views, {kasir: vKasir, riwayat: vRiwayat, stok: vStok, menu: vMenu, master: vMaster, users: vUsers, settings: vSettings, diag: vDiag});
-Object.assign(APP, {S: S, api: api, $: $, rp: rp, num: num, esc: esc, LS: LS, T: T, sheet: sheet, closeSheet: closeSheet, toast: toast, busy: busy, busyLabel: busyLabel, skel: skel, ACT: ACT,
+Object.assign(APP, {S: S, api: api, $: $, rp: rp, num: num, parseDec: parseDec, esc: esc, LS: LS, T: T, sheet: sheet, closeSheet: closeSheet, toast: toast, busy: busy, busyLabel: busyLabel, skel: skel, ACT: ACT, autoGenSku: autoGenSku,
   render: render, loadData: loadData, checkUpdates: checkUpdates, vById: vById, pById: pById, vName: vName, vSub: vSub, chName: chName, fmtDT: fmtDT, today: today, own: own, start: start});
 })();
