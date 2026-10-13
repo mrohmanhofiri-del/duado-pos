@@ -1,7 +1,8 @@
-// Service worker: cache aset aplikasi (stale-while-revalidate). Naikkan VERSION setiap rilis.
-const VERSION = 'duado-v1.0.0';
-const ASSETS = ['./', 'index.html', 'css/app.css', 'js/config.js', 'js/app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
-self.addEventListener('install', e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())); });
+// Service worker: cache aset aplikasi (stale-while-revalidate). Naikkan VERSION setiap rilis agar HP menampilkan banner "Versi baru tersedia".
+const VERSION = 'duado-v1.1.0';
+const ASSETS = ['./', 'index.html', 'css/app.css', 'js/config.js', 'js/app.js', 'js/modules.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
+self.addEventListener('install', e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(ASSETS))); }); // menunggu sampai pengguna menekan "Muat ulang"
+self.addEventListener('message', e => { if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting(); });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });

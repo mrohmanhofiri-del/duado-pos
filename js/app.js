@@ -12,6 +12,7 @@ const LS = {
   del(k) { try { localStorage.removeItem(k); } catch (e) {} }
 };
 const T = v => String(v).toUpperCase() === 'TRUE';
+const APP = window.APP = {views: {}};
 const S = {token: LS.get('token', null), data: LS.get('data', null), queue: LS.get('queue', []), tab: 'kasir', ch: null, cat: 'Semua', q: '',
   cart: [], diskon: '', metode: 'tunai', terima: '', catatan: '', nomor: {}, mt: 'products', stab: 'varian', day: null, pb: {items: [], ongkir: '', sup: ''}, rc: null};
 const own = () => !!(S.data && S.data.user.role === 'owner');
@@ -29,13 +30,26 @@ function sheet(html) { const b = $('#sheet'); b.innerHTML = '<div class="sheet-b
 function closeSheet() { const b = $('#sheet'); b.hidden = true; b.innerHTML = ''; }
 
 /* ---------- API dan sinkronisasi ---------- */
+let pending = 0;
+function netState() { document.body.classList.toggle('net', pending > 0); badge(); }
 async function api(action, payload) {
   if (!C.API_URL || C.API_URL.indexOf('http') !== 0) throw new Error('API_URL belum diisi di js/config.js');
-  const r = await fetch(C.API_URL, {method: 'POST', headers: {'Content-Type': 'text/plain;charset=utf-8'}, body: JSON.stringify({action: action, token: S.token, payload: payload || {}})});
-  const j = await r.json();
-  if (!j.ok) { const e = new Error(j.error); e.server = true; e.auth = /^Sesi/.test(j.error); throw e; }
-  return j.data;
+  pending++; netState();
+  try {
+    const r = await fetch(C.API_URL, {method: 'POST', headers: {'Content-Type': 'text/plain;charset=utf-8'}, body: JSON.stringify({action: action, token: S.token, payload: payload || {}})});
+    const j = await r.json();
+    if (!j.ok) { const e = new Error(j.error); e.server = true; e.auth = /^Sesi/.test(j.error); throw e; }
+    return j.data;
+  } finally { pending--; netState(); }
 }
+/* Animasi loading: overlay untuk aksi simpan/muat ulang, bar di atas untuk semua panggilan server, skeleton untuk daftar */
+async function busy(label, fn) {
+  if (S.busyOn) return; S.busyOn = true;
+  const el = $('#busy'); el.innerHTML = '<div class="busybox"><div class="loader"></div><div class="lbl">' + esc(label) + '</div></div>'; el.hidden = false;
+  try { return await fn(); } finally { S.busyOn = false; el.hidden = true; el.innerHTML = ''; }
+}
+function busyLabel(t) { const l = document.querySelector('#busy .lbl'); if (l) l.textContent = t; }
+const skel = n => Array.from({length: n || 3}, () => '<div class="sk"></div>').join('');
 function applyQueueStock() {
   S.queue.forEach(q => { if (q.status === 'pending') q.payload.items.forEach(it => { const v = vById(it.variant_id); if (v) v.stok = (Number(v.stok) || 0) - it.qty; }); });
 }
@@ -77,29 +91,30 @@ function renderLogin(msg) {
 }
 async function doLogin() {
   const u = $('#lu').value.trim(), p = $('#lp').value; if (!u || !p) return;
-  $('#lerr').textContent = 'Masuk...';
-  try {
+  $('#lerr').textContent = '';
+  await busy('Masuk…', async () => { try {
     const r = await api('login', {username: u, pin: p}); S.token = r.token; LS.set('token', r.token); LS.set('lastUser', u);
-    await loadData(); S.tab = 'kasir'; render(); flush();
-  } catch (e) { $('#lerr').textContent = e.server ? e.message : 'Tidak dapat terhubung ke server. ' + e.message; }
+    await loadData(); S.tab = own() ? 'dash' : 'kasir'; render(); flush();
+  } catch (e) { $('#lerr').textContent = e.server ? e.message : 'Tidak dapat terhubung ke server. ' + e.message; } });
 }
 
 /* ---------- Kerangka ---------- */
 function render() {
   if (!S.token || !S.data) return renderLogin();
   const d = S.data; if (!S.ch || !d.channels.some(c => c.id === S.ch)) S.ch = d.channels[0] && d.channels[0].id;
-  const tabs = [['kasir', 'Kasir'], ['riwayat', 'Riwayat'], ['stok', 'Stok'], ['menu', 'Menu']], inMenu = ['menu', 'master', 'users', 'settings'].indexOf(S.tab) >= 0;
+  const o = own(), tabs = o ? [['dash', 'Beranda'], ['kasir', 'Kasir'], ['stok', 'Stok'], ['produksi', 'Produksi'], ['menu', 'Menu']] : [['kasir', 'Kasir'], ['riwayat', 'Riwayat'], ['stok', 'Stok'], ['menu', 'Menu']],
+    inMenu = ['menu', 'master', 'users', 'settings', 'resep', 'laporan', 'shopee'].concat(o ? ['riwayat'] : []).indexOf(S.tab) >= 0;
   $('#app').innerHTML = '<header class="top"><b>' + esc(d.settings.nama_usaha || 'Duado Snack') + '</b><span class="badge" id="badge"></span></header><main id="main"></main><div id="cartbar"></div>' +
     '<nav class="nav">' + tabs.map(t => '<button data-act="tab" data-t="' + t[0] + '" class="' + ((S.tab === t[0] || (t[0] === 'menu' && inMenu)) ? 'on' : '') + '">' + t[1] + '</button>').join('') + '</nav>';
   badge();
-  ({kasir: vKasir, riwayat: vRiwayat, stok: vStok, menu: vMenu, master: vMaster, users: vUsers, settings: vSettings})[S.tab]();
+  (APP.views[S.tab] || vKasir)();
   cartbar();
 }
 function badge() {
   const b = $('#badge'); if (!b) return;
   const p = S.queue.filter(q => q.status === 'pending').length, r = S.queue.filter(q => q.status === 'review').length;
-  b.className = 'badge ' + (r ? 'warn' : p ? 'wait' : 'ok');
-  b.textContent = r ? r + ' perlu ditinjau' : p ? p + ' menunggu sinkron' : (navigator.onLine ? 'Tersinkron' : 'Offline');
+  b.className = 'badge ' + (r ? 'warn' : p ? 'wait' : 'ok') + (pending > 0 ? ' spin' : '');
+  b.textContent = pending > 0 ? 'Menyinkronkan' : r ? r + ' perlu ditinjau' : p ? p + ' menunggu sinkron' : (navigator.onLine ? 'Tersinkron' : 'Offline');
 }
 
 /* ---------- Kasir ---------- */
@@ -184,7 +199,7 @@ function refreshRc() { const el = $('#rtxt'); if (el && S.rc) el.textContent = r
 /* ---------- Riwayat ---------- */
 async function vRiwayat() {
   const day = S.day || today();
-  $('#main').innerHTML = '<label>Tanggal<input type="date" class="inp" data-chg="day" value="' + day + '"></label><div id="rq"></div><div id="rsum"></div><div id="rlist"><p class="muted">Memuat...</p></div>';
+  $('#main').innerHTML = '<label>Tanggal<input type="date" class="inp" data-chg="day" value="' + day + '"></label><div id="rq"></div><div id="rsum"></div><div id="rlist">' + skel(3) + '</div>';
   const qs = S.queue.map((q, i) => '<div class="li"><div><b>' + rp(q.total) + '</b> <span class="muted">' + esc(q.ch) + ' · ' + fmtDT(q.ts).slice(11) + '</span>' +
     (q.status === 'review' ? '<div class="muted" style="color:var(--err)">' + esc(q.error) + '</div>' : '') + '</div><div class="r"><span class="tag ' + (q.status === 'review' ? 'red' : '') + '">' + (q.status === 'review' ? 'Perlu ditinjau' : 'Menunggu sinkron') + '</span>' +
     (q.status === 'review' ? '<div><button class="chip" data-act="qretry" data-i="' + i + '">Coba lagi</button> <button class="chip" data-act="qdel" data-i="' + i + '">Hapus</button></div>' : '') + '</div></div>').join('');
@@ -217,10 +232,12 @@ function adjSheet(t, id) {
     '<button class="btn pri" data-act="adjsave" data-t="' + t + '" data-id="' + esc(id) + '">Simpan</button>');
 }
 async function adjSave(t, id) {
+  return busy('Menyimpan stok…', async () => {
   try {
     const r = await api('stock.adjust', {tipe: t, id: id, stok_baru: $('#a_s').value, hpp: $('#a_h').value, alasan: $('#a_r').value});
     const it = t === 'bahan' ? S.data.materials.find(m => m.id === id) : vById(id); it.stok = r.stok; it.hpp_rata2 = r.hpp_rata2; LS.set('data', S.data); closeSheet(); render(); toast('Stok disimpan');
   } catch (e) { toast(e.message); }
+  });
 }
 function pbSheet() {
   const m = S.data.materials, pb = S.pb, tot = pb.items.reduce((a, i) => a + i.qty * i.harga, 0);
@@ -231,19 +248,21 @@ function pbSheet() {
     '<div class="kv big"><span>Total</span><span>' + rp(tot + (Number(pb.ongkir) || 0)) + '</span></div><button class="btn pri" data-act="pbsave">Simpan pembelian</button>');
 }
 async function pbSave() {
+  return busy('Menyimpan pembelian…', async () => {
   const pb = S.pb; if (!pb.items.length) return toast('Daftar masih kosong');
   try {
     const r = await api('purchase.create', {supplier_id: pb.sup, ongkir: Number(pb.ongkir) || 0, items: pb.items.map(i => ({material_id: i.id, qty: i.qty, harga_satuan: i.harga}))});
     r.materials.forEach(u => { const m = S.data.materials.find(x => x.id === u.id); if (m) { m.stok = u.stok; m.hpp_rata2 = u.hpp_rata2; } });
     LS.set('data', S.data); S.pb = {items: [], ongkir: '', sup: ''}; closeSheet(); render(); toast('Pembelian tersimpan, HPP diperbarui');
   } catch (e) { toast(e.message); }
+  });
 }
 
 /* ---------- Menu, data master, pengguna, pengaturan ---------- */
 function vMenu() {
   const u = S.data.user, o = own(), b = (a, t, c) => '<button class="btn ' + (c || 'sec') + '" data-act="' + a + '">' + t + '</button>';
   $('#main').innerHTML = '<div class="li"><div><b>' + esc(u.nama) + '</b><div class="muted">' + esc(u.role) + ' · versi ' + esc(C.VERSION || '') + '</div></div><span class="badge ok">' + (navigator.onLine ? 'Online' : 'Offline') + '</span></div>' +
-    (o ? b('go_master', 'Data Master (produk, varian, harga, bahan)') + b('go_users', 'Pengguna') + b('go_settings', 'Pengaturan (PPN, struk, stok)') : '') + b('sync', 'Perbarui data dan kirim antrean') +
+    (o ? b('go_riwayat', 'Riwayat penjualan') + b('go_laporan', 'Laporan') + b('go_master', 'Data Master (produk, varian, harga, bahan, resep, biaya)') + b('go_shopee', 'Impor pesanan Shopee (CSV)') + b('go_users', 'Pengguna') + b('go_settings', 'Pengaturan (PPN, struk, HPP, stok)') : '') + b('sync', 'Perbarui data dan kirim antrean') +
     b('logout', 'Keluar', 'dan') + '<p class="muted">Pasang di layar utama: menu Chrome, lalu "Tambahkan ke layar utama".</p>';
 }
 const RT = {};
@@ -253,6 +272,7 @@ const MT = {
   channel_prices: {l: 'Harga jual', k: 'prices', f: [['variant_id', 'Varian', 'ref:variants'], ['channel_id', 'Channel', 'ref:channels'], ['harga_jual', 'Harga jual (Rp)', 'number']], t: r => { const v = vById(r.variant_id); return (v ? vName(v) + ' ' + vSub(v) : '?') + ' · ' + chName(r.channel_id) + ' · ' + rp(r.harga_jual); }},
   materials: {l: 'Bahan dan kemasan', k: 'materials', f: [['nama', 'Nama'], ['tipe', 'Tipe', 'sel:bahan,kemasan,barang jadi beli'], ['satuan', 'Satuan (kg, gram, pcs)'], ['stok_minimum', 'Stok minimum', 'number']], t: r => r.nama + ' (' + r.satuan + ')'},
   suppliers: {l: 'Supplier', k: 'suppliers', f: [['nama', 'Nama'], ['kontak', 'Kontak'], ['catatan', 'Catatan']], t: r => r.nama},
+  expenses: {l: 'Biaya operasional', k: 'expenses', f: [['tanggal', 'Tanggal', 'date'], ['kategori', 'Kategori', 'sel:Gas,Listrik,Air,Sewa,Gaji/Tenaga kerja,Transport,Pemasaran,Lain-lain'], ['nominal', 'Nominal (Rp)', 'number'], ['catatan', 'Catatan']], t: r => String(r.tanggal).slice(0, 10) + ' · ' + r.kategori + ' · ' + rp(r.nominal)},
   channels: {l: 'Channel', k: 'channels', f: [['nama', 'Nama'], ['fee_persen', 'Fee (%)', 'number'], ['fee_tetap', 'Fee tetap (Rp)', 'number']], t: r => r.nama + ' · fee ' + (r.fee_persen || 0) + '%'}
 };
 Object.keys(MT).forEach(k => RT[MT[k].k] = MT[k].t);
@@ -260,30 +280,41 @@ function field(f, val) {
   const k = f[0], l = f[1], t = f[2] || '', v = val == null ? '' : val;
   if (t.indexOf('ref:') === 0) { const key = t.slice(4); return '<label>' + l + '<select class="inp" data-f="' + k + '"><option value="">- pilih -</option>' + S.data[key].map(r => '<option value="' + esc(r.id) + '"' + (r.id === v ? ' selected' : '') + '>' + esc(RT[key](r)) + '</option>').join('') + '</select></label>'; }
   if (t.indexOf('sel:') === 0) return '<label>' + l + '<select class="inp" data-f="' + k + '">' + t.slice(4).split(',').map(o => '<option' + (o === v ? ' selected' : '') + '>' + o + '</option>').join('') + '</select></label>';
-  return '<label>' + l + '<input class="inp" data-f="' + k + '"' + (t === 'number' ? ' inputmode="decimal"' : '') + ' value="' + esc(v) + '"></label>';
+  if (t === 'date') return '<label>' + l + '<input type="date" class="inp" data-f="' + k + '" value="' + esc(String(v).slice(0, 10)) + '"></label>';
+  const uq = a => Array.from(new Set(a.filter(Boolean))), D = S.data || {products: [], variants: []};
+  const sug = k === 'kategori' ? uq((D.products || []).map(p => p.kategori)) : k === 'ukuran' ? uq((D.variants || []).map(x => x.ukuran).concat(['50 g', '100 g', '250 g', '500 g'])) :
+    k === 'level_pedas' ? uq((D.variants || []).map(x => x.level_pedas).concat(['Original', 'Level 1', 'Level 2', 'Level 3', 'Level 4', 'Level 5'])) : null;
+  return '<label>' + l + '<input class="inp" data-f="' + k + '"' + (sug ? ' list="dl_' + k + '"' : '') + (t === 'number' ? ' inputmode="decimal"' : '') + ' value="' + esc(v) + '">' +
+    (sug ? '<datalist id="dl_' + k + '">' + sug.map(x => '<option value="' + esc(x) + '">').join('') + '</datalist>' : '') + '</label>';
 }
 function readForm() { const o = {}; document.querySelectorAll('#sheet [data-f]').forEach(e => o[e.dataset.f] = e.type === 'checkbox' ? e.checked : e.value); return o; }
 function vMaster() {
-  const cfg = MT[S.mt], rows = S.data[cfg.k] || [];
-  $('#main').innerHTML = '<button class="chip" data-act="tab" data-t="menu">← Menu</button><div class="chips" style="margin-top:8px">' + Object.keys(MT).map(k => '<button class="chip ' + (k === S.mt ? 'on' : '') + '" data-act="mt" data-k="' + k + '">' + MT[k].l + '</button>').join('') + '</div>' +
+  const cfg = MT[S.mt], rows = S.mt === 'expenses' ? (S.exp || []) : (S.data[cfg.k] || []);
+  $('#main').innerHTML = '<button class="chip" data-act="tab" data-t="menu">← Menu</button><div class="chips" style="margin-top:8px">' + Object.keys(MT).map(k => '<button class="chip ' + (k === S.mt ? 'on' : '') + '" data-act="mt" data-k="' + k + '">' + MT[k].l + '</button>').join('') + '<button class="chip" data-act="go_resep">Resep</button></div>' +
     '<button class="btn pri" data-act="medit" data-id="">+ Tambah ' + cfg.l.toLowerCase() + '</button><div style="height:8px"></div>' +
-    rows.map(r => '<button class="li" style="width:100%;border:0;font:inherit;text-align:left" data-act="medit" data-id="' + esc(r.id) + '"><span>' + esc(cfg.t(r)) + '</span><span class="muted">Ubah</span></button>').join('');
+    rows.map(r => '<button class="li" style="width:100%;border:0;font:inherit;text-align:left" data-act="medit" data-id="' + esc(r.id) + '"><span>' + esc(cfg.t(r)) + '</span><span class="muted">Ubah</span></button>').join('') + (S.mt === 'expenses' && !S.expLoaded ? skel(3) : '');
+  if (S.mt === 'expenses' && !S.expLoaded) loadExp();
 }
+async function loadExp() { try { S.exp = await api('master.list', {table: 'expenses'}); S.expLoaded = true; if (S.tab === 'master') vMaster(); } catch (e) { toast(e.message); } }
 function meditSheet(id) {
-  const cfg = MT[S.mt], r = id ? S.data[cfg.k].find(x => x.id === id) : {};
+  const cfg = MT[S.mt], r = id ? (S.mt === 'expenses' ? S.exp : S.data[cfg.k]).find(x => x.id === id) : {tanggal: today()};
   sheet('<h2>' + (id ? 'Ubah ' : 'Tambah ') + cfg.l.toLowerCase() + '</h2>' + cfg.f.map(f => field(f, r[f[0]])).join('') + '<button class="btn pri" data-act="msave" data-id="' + esc(id) + '">Simpan</button>' + (id ? '<button class="btn dan" data-act="mdel" data-id="' + esc(id) + '">Hapus</button>' : ''));
 }
 async function mSave(id) {
+  return busy('Menyimpan data…', async () => {
   const data = readForm(); if (id) data.id = id;
-  ['harga_jual', 'fee_persen', 'fee_tetap', 'stok_minimum'].forEach(k => { if (k in data) data[k] = Number(data[k]) || 0; });
-  try { await api('master.save', {table: S.mt, data: data}); await loadData(); closeSheet(); render(); toast('Tersimpan'); } catch (e) { toast(e.message); }
+  ['harga_jual', 'fee_persen', 'fee_tetap', 'stok_minimum', 'nominal'].forEach(k => { if (k in data) data[k] = Number(data[k]) || 0; });
+  try { await api('master.save', {table: S.mt, data: data}); S.expLoaded = false; await loadData(); closeSheet(); render(); toast('Tersimpan'); } catch (e) { toast(e.message); }
+  });
 }
 async function mDel(id) {
+  return busy('Menghapus…', async () => {
   if (!confirm('Hapus data ini?')) return;
-  try { await api('master.remove', {table: S.mt, id: id}); await loadData(); closeSheet(); render(); toast('Dihapus'); } catch (e) { toast(e.message); }
+  try { await api('master.remove', {table: S.mt, id: id}); S.expLoaded = false; await loadData(); closeSheet(); render(); toast('Dihapus'); } catch (e) { toast(e.message); }
+  });
 }
 async function vUsers() {
-  $('#main').innerHTML = '<button class="chip" data-act="tab" data-t="menu">← Menu</button><button class="btn pri" data-act="uedit" data-id="">+ Tambah pengguna</button><div id="ul"><p class="muted">Memuat...</p></div>';
+  $('#main').innerHTML = '<button class="chip" data-act="tab" data-t="menu">← Menu</button><button class="btn pri" data-act="uedit" data-id="">+ Tambah pengguna</button><div id="ul">' + skel(3) + '</div>';
   try { S.users = await api('user.list'); $('#ul').innerHTML = S.users.map(u => '<button class="li" style="width:100%;border:0;font:inherit;text-align:left;margin-top:8px" data-act="uedit" data-id="' + esc(u.id) + '"><span><b>' + esc(u.nama) + '</b> <span class="muted">@' + esc(u.username) + ' · ' + esc(u.role) + '</span></span>' + (String(u.aktif) === 'false' ? '<span class="tag red">Nonaktif</span>' : '') + '</button>').join(''); }
   catch (e) { $('#ul').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
 }
@@ -293,18 +324,22 @@ function ueditSheet(id) {
     '<label>PIN (4-8 angka)' + (id ? ', kosongkan jika tidak diganti' : '') + '<input class="inp" data-f="pin" inputmode="numeric" type="password"></label><label><input type="checkbox" data-f="aktif"' + (String(u.aktif) !== 'false' ? ' checked' : '') + '> Aktif</label><button class="btn pri" data-act="usave" data-id="' + esc(id) + '">Simpan</button>');
 }
 async function uSave(id) {
+  return busy('Menyimpan pengguna…', async () => {
   const d = readForm(); if (id) d.id = id;
   try { await api('user.save', d); closeSheet(); vUsers(); toast('Tersimpan'); } catch (e) { toast(e.message); }
+  });
 }
 function vSettings() {
   const s = S.data.settings, cb = (k, l) => '<label style="margin:8px 0"><input type="checkbox" data-f="' + k + '"' + (T(s[k]) ? ' checked' : '') + '> ' + l + '</label>';
   $('#main').innerHTML = '<button class="chip" data-act="tab" data-t="menu">← Menu</button><div id="sf" style="margin-top:8px">' + field(['nama_usaha', 'Nama usaha'], s.nama_usaha) + field(['footer_struk', 'Teks bawah struk'], s.footer_struk) +
     cb('ppn_aktif', 'PPN aktif') + field(['ppn_persen', 'Tarif PPN (%)', 'number'], s.ppn_persen) + cb('ppn_inklusif', 'Harga jual sudah termasuk PPN') + cb('blokir_stok_minus', 'Blokir penjualan jika stok kurang') +
-    field(['overhead_per_unit', 'Overhead per bungkus (Rp, untuk HPP produksi)', 'number'], s.overhead_per_unit) + '</div><button class="btn pri" data-act="ssave">Simpan pengaturan</button>';
+    field(['overhead_per_unit', 'Overhead per bungkus (Rp, metode per_unit)', 'number'], s.overhead_per_unit) + field(['metode_overhead', 'Metode overhead produksi', 'sel:per_unit,per_batch'], s.metode_overhead || 'per_unit') + field(['overhead_per_batch', 'Overhead per batch (Rp, metode per_batch)', 'number'], s.overhead_per_batch) + field(['target_margin', 'Target margin minimum (%)', 'number'], s.target_margin || 30) + '</div><button class="btn pri" data-act="ssave">Simpan pengaturan</button>';
 }
 async function sSave() {
+  return busy('Menyimpan pengaturan…', async () => {
   const v = {}; document.querySelectorAll('#sf [data-f]').forEach(e => v[e.dataset.f] = e.type === 'checkbox' ? e.checked : e.value);
   try { await api('setting.setMany', {values: v}); await loadData(); render(); toast('Pengaturan tersimpan'); } catch (e) { toast(e.message); }
+  });
 }
 
 /* ---------- Aksi (event delegation) ---------- */
@@ -327,10 +362,10 @@ const ACT = {
   adj: el => adjSheet(el.dataset.t, el.dataset.id), adjsave: el => adjSave(el.dataset.t, el.dataset.id),
   pbopen: pbSheet, pbdel: el => { S.pb.items.splice(el.dataset.i, 1); pbSheet(); }, pbsave: pbSave,
   pbadd: () => { const q = Number($('#pb_q').value), h = Number($('#pb_h').value), id = $('#pb_m').value; if (!id || !(q > 0) || !(h >= 0) || $('#pb_h').value === '') return toast('Isi jumlah dan harga'); S.pb.items.push({id: id, qty: q, harga: h}); pbSheet(); },
-  go_master: () => { S.tab = 'master'; render(); }, go_users: () => { S.tab = 'users'; render(); }, go_settings: () => { S.tab = 'settings'; render(); },
+  go_master: () => { S.tab = 'master'; render(); }, go_riwayat: () => { S.tab = 'riwayat'; render(); }, go_laporan: () => { S.tab = 'laporan'; render(); }, go_shopee: () => { S.tab = 'shopee'; render(); }, go_resep: () => { S.tab = 'resep'; render(); }, go_users: () => { S.tab = 'users'; render(); }, go_settings: () => { S.tab = 'settings'; render(); },
   mt: el => { S.mt = el.dataset.k; vMaster(); }, medit: el => meditSheet(el.dataset.id), msave: el => mSave(el.dataset.id), mdel: el => mDel(el.dataset.id),
   uedit: el => ueditSheet(el.dataset.id), usave: el => uSave(el.dataset.id), ssave: sSave,
-  sync: async () => { toast('Menyinkronkan...'); await refresh(true); await flush(); toast('Selesai'); }
+  sync: () => busy('Memperbarui data…', async () => { try { await loadData(); lastRef = Date.now(); render(); await flush(); toast('Data diperbarui'); } catch (e) { if (e.auth) softLogout(); else toast('Gagal memperbarui: ' + e.message); } })
 };
 document.addEventListener('click', e => { const el = e.target.closest('[data-act]'); if (el && ACT[el.dataset.act]) ACT[el.dataset.act](el); });
 document.addEventListener('input', e => {
@@ -345,10 +380,23 @@ document.addEventListener('change', e => { if (e.target.dataset && e.target.data
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && $('#lp') && document.activeElement === $('#lp')) doLogin(); });
 
 /* ---------- Mulai ---------- */
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+let swReg = null;
+function updBanner() { const b = $('#upd'); b.hidden = false; b.innerHTML = 'Versi baru tersedia <button data-act="reload">Muat ulang</button>'; }
+if ('serviceWorker' in navigator) {
+  const had = !!navigator.serviceWorker.controller; let rl = false;
+  navigator.serviceWorker.register('sw.js').then(reg => {
+    swReg = reg; if (reg.waiting && had) updBanner();
+    reg.addEventListener('updatefound', () => { const nw = reg.installing; if (nw) nw.addEventListener('statechange', () => { if (nw.state === 'installed' && navigator.serviceWorker.controller) updBanner(); }); });
+  }).catch(() => {});
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !rl) { rl = true; location.reload(); } });
+}
+ACT.reload = () => { if (swReg && swReg.waiting) swReg.waiting.postMessage({type: 'SKIP_WAITING'}); else location.reload(); };
 window.addEventListener('online', () => { badge(); flush(); refresh(true); });
 window.addEventListener('offline', badge);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); flush(); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); flush(); if (swReg) swReg.update().catch(() => {}); } });
 setInterval(flush, 20000);
-if (S.token && S.data) { render(); refresh(true); flush(); } else renderLogin();
+function start() { if (S.token && S.data) { S.tab = own() ? 'dash' : 'kasir'; render(); refresh(true); flush(); } else renderLogin(); }
+Object.assign(APP.views, {kasir: vKasir, riwayat: vRiwayat, stok: vStok, menu: vMenu, master: vMaster, users: vUsers, settings: vSettings});
+Object.assign(APP, {S: S, api: api, $: $, rp: rp, num: num, esc: esc, LS: LS, T: T, sheet: sheet, closeSheet: closeSheet, toast: toast, busy: busy, busyLabel: busyLabel, skel: skel, ACT: ACT,
+  render: render, loadData: loadData, vById: vById, pById: pById, vName: vName, vSub: vSub, chName: chName, fmtDT: fmtDT, today: today, own: own, start: start});
 })();
