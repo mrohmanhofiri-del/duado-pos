@@ -7,11 +7,100 @@ const rp = n => 'Rp\u00a0' + Math.round(Number(n) || 0).toLocaleString('id-ID');
 const num = n => { const x = Number(n) || 0; return Number.isInteger(x) ? x.toLocaleString('id-ID') : x.toLocaleString('id-ID', {minimumFractionDigits: 0, maximumFractionDigits: 4}); };
 const parseDec = s => { if (s == null) return 0; if (typeof s === 'number') return isNaN(s) ? 0 : s; const n = parseFloat(String(s).trim().replace(',', '.')); return isNaN(n) ? 0 : n; };
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const LS = {
-  get(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (e) { return d; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { toast('Penyimpanan perangkat penuh'); } },
-  del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+
+/* ===== Penyimpanan Lokal Lanjutan (IndexedDB Engine dengan LocalStorage Fallback) ===== */
+const DB = {
+  _mem: {},
+  _db: null,
+  _ready: false,
+  _initSync() {
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k) {
+          try { this._mem[k] = JSON.parse(localStorage.getItem(k)); } catch (e) {}
+        }
+      }
+    } catch (e) {}
+  },
+  async init() {
+    if (this._ready) return;
+    if (!window.indexedDB) { this._ready = true; return; }
+    try {
+      this._db = await new Promise((resolve, reject) => {
+        const req = indexedDB.open('duado_pos_db', 1);
+        req.onupgradeneeded = e => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
+        };
+        req.onsuccess = e => resolve(e.target.result);
+        req.onerror = () => reject(req.error);
+      });
+      await new Promise(resolve => {
+        const tx = this._db.transaction('kv', 'readonly');
+        const st = tx.objectStore('kv');
+        const req = st.openCursor();
+        req.onsuccess = e => {
+          const cursor = e.target.result;
+          if (cursor) {
+            this._mem[cursor.key] = cursor.value;
+            cursor.continue();
+          } else {
+            resolve();
+          }
+        };
+        req.onerror = () => resolve();
+      });
+      this._ready = true;
+    } catch (e) {
+      console.warn('IndexedDB unavailable, fallback to localStorage:', e);
+      this._ready = true;
+    }
+  },
+  get(k, d) {
+    if (k in this._mem) return this._mem[k] == null ? d : this._mem[k];
+    try {
+      const v = JSON.parse(localStorage.getItem(k));
+      return v == null ? d : v;
+    } catch (e) {
+      return d;
+    }
+  },
+  set(k, v) {
+    this._mem[k] = v;
+    if (this._db) {
+      try {
+        const tx = this._db.transaction('kv', 'readwrite');
+        tx.objectStore('kv').put(v, k);
+      } catch (e) {
+        console.warn('IDB put error:', e);
+      }
+    }
+    try {
+      localStorage.setItem(k, JSON.stringify(v));
+    } catch (e) {
+      try {
+        if (k !== 'data') {
+          localStorage.removeItem('data');
+          localStorage.setItem(k, JSON.stringify(v));
+        }
+      } catch (x) {}
+    }
+  },
+  del(k) {
+    delete this._mem[k];
+    if (this._db) {
+      try {
+        const tx = this._db.transaction('kv', 'readwrite');
+        tx.objectStore('kv').delete(k);
+      } catch (e) {}
+    }
+    try { localStorage.removeItem(k); } catch (e) {}
+  }
 };
+DB._initSync();
+const LS = DB;
+
 const T = v => String(v).toUpperCase() === 'TRUE';
 const APP = window.APP = {views: {}};
 const S = {token: LS.get('token', null), data: LS.get('data', null), queue: LS.get('queue', []), tab: 'kasir', ch: LS.get('ch', null), cat: 'Semua', q: '',
@@ -254,8 +343,63 @@ function render() {
 function badge() {
   const b = $('#badge'); if (!b) return;
   const p = S.queue.filter(q => q.status === 'pending').length, r = S.queue.filter(q => q.status === 'review').length;
-  b.className = 'badge ' + (r ? 'warn' : p ? 'wait' : navigator.onLine ? 'ok' : 'off') + (pending > 0 ? ' spin' : '');
-  b.textContent = pending > 0 ? 'Menyinkronkan' : r ? r + ' perlu ditinjau' : p ? p + ' menunggu sinkron' : (navigator.onLine ? 'Tersinkron' : 'Offline');
+  b.setAttribute('data-act', 'badge_info');
+  b.setAttribute('role', 'button');
+  b.setAttribute('tabindex', '0');
+  b.setAttribute('title', 'Status koneksi & antrean transaksi');
+
+  if (pending > 0) {
+    b.className = 'badge wait spin';
+    b.textContent = 'Menyinkronkan (' + pending + ')';
+  } else if (r > 0) {
+    b.className = 'badge warn';
+    b.textContent = '⚠️ ' + r + ' perlu ditinjau';
+  } else if (p > 0) {
+    if (navigator.onLine) {
+      b.className = 'badge wait';
+      b.textContent = '🟡 ' + p + ' siap dikirim';
+    } else {
+      b.className = 'badge wait local-save';
+      b.textContent = '⚡ ' + p + ' tersimpan offline';
+    }
+  } else {
+    if (navigator.onLine) {
+      b.className = 'badge ok';
+      b.textContent = '🟢 Online · Tersinkron';
+    } else {
+      b.className = 'badge off';
+      b.textContent = '⚪ Mode Offline';
+    }
+  }
+}
+
+function badgeInfoSheet() {
+  const p = S.queue.filter(q => q.status === 'pending'),
+        r = S.queue.filter(q => q.status === 'review'),
+        totPending = p.reduce((a, b) => a + (Number(b.total) || 0), 0);
+  const online = navigator.onLine;
+  const timeSinceSync = S.lastSync ? Math.round((Date.now() - S.lastSync) / 60000) : null;
+  const syncText = timeSinceSync === null ? 'Belum pernah' : timeSinceSync < 1 ? 'Baru saja' : timeSinceSync + ' menit lalu';
+
+  sheet(
+    '<div class="grab"></div><div class="sh-h"><h2>Status Sinkronisasi & Jaringan</h2><span class="muted">' + (online ? '🟢 Terhubung ke Server' : '⚪ Mode Offline') + '</span></div>' +
+    '<div class="card-s" style="margin-top:12px">' +
+      '<div class="kv"><span>Koneksi Internet</span><b>' + (online ? '<span class="ok-r">Online</span>' : '<span class="err-r">Offline</span>') + '</b></div>' +
+      '<div class="kv"><span>Penyimpanan Lokal</span><b>IndexedDB (Aman & Ringan)</b></div>' +
+      '<div class="kv"><span>Sinkron Terakhir</span><b>' + syncText + '</b></div>' +
+      '<div class="kv"><span>Versi Data Server</span><b>v' + (S.data ? (S.data.ver || '1') : '-') + '</b></div>' +
+      '<div class="kv"><span>Antrean Belum Terkirim</span><b>' + p.length + ' transaksi' + (totPending > 0 ? ' (' + rp(totPending) + ')' : '') + '</b></div>' +
+      (r.length ? '<div class="kv err-r"><span>Perlu Ditinjau (Gagal)</span><b>' + r.length + ' transaksi</b></div>' : '') +
+    '</div>' +
+    '<div class="notice" style="background:#EBF5FB;color:#1B4F72">' +
+      '<span>ℹ️ Transaksi kasir selalu tersimpan aman di database lokal perangkat (IndexedDB) dan otomatis dikirim saat sinyal internet kembali stabil.</span>' +
+    '</div>' +
+    '<div class="row2" style="margin-top:10px">' +
+      (online && (p.length || r.length) ? '<button class="btn pri" data-act="sync_flush">⚡ Kirim Antrean Sekarang</button>' : '') +
+      '<button class="btn sec" data-act="go_riwayat">📋 Buka Riwayat Transaksi</button>' +
+    '</div>' +
+    (online ? '<button class="btn sm dark" data-act="test_ping" style="margin-top:8px">🔄 Uji Respon Server (Ping)</button>' : '')
+  );
 }
 
 /* ---------- Kasir ---------- */
@@ -272,11 +416,49 @@ function vKasir() {
   const d = S.data; S.cart = S.cart.filter(l => vById(l.v));
   const withV = new Set(d.variants.map(v => v.product_id)), cats = ['Semua'].concat(Array.from(new Set(d.products.filter(p => withV.has(p.id)).map(p => p.kategori).filter(Boolean)))), noV = d.products.filter(p => !withV.has(p.id)).length;
   if (S.cat !== 'Semua' && cats.indexOf(S.cat) < 0) S.cat = 'Semua';
-  $('#main').innerHTML = '<div class="kasir-top">' + (own() && noV ? '<div class="notice"><span>' + noV + ' produk belum punya varian, jadi belum tampil di sini.</span><button class="chip" data-act="go_cek">Periksa data</button></div>' : '') +
-    '<div class="seg">' + d.channels.map(c => '<button class="' + (c.id === S.ch ? 'on' : '') + '" data-act="chan" data-c="' + esc(c.id) + '">' + esc(chShort(c.nama)) + '</button>').join('') + '</div>' +
-    '<label class="search">' + svg('search', 18) + '<input id="q" class="inp" data-in="q" placeholder="Cari produk atau SKU" value="' + esc(S.q) + '" aria-label="Cari produk"></label>' +
-    '<div class="chips">' + cats.map(c => '<button class="chip ' + (c === S.cat ? 'on' : '') + '" data-act="cat" data-c="' + esc(c) + '">' + esc(c) + '</button>').join('') + '</div></div><div class="grid" id="grid"></div>';
+  $('#main').innerHTML = '<div class="pos-layout">' +
+    '<div class="pos-catalog">' +
+      '<div class="kasir-top">' + (own() && noV ? '<div class="notice"><span>' + noV + ' produk belum punya varian, jadi belum tampil di sini.</span><button class="chip" data-act="go_cek">Periksa data</button></div>' : '') +
+      '<div class="seg">' + d.channels.map(c => '<button class="' + (c.id === S.ch ? 'on' : '') + '" data-act="chan" data-c="' + esc(c.id) + '">' + esc(chShort(c.nama)) + '</button>').join('') + '</div>' +
+      '<label class="search">' + svg('search', 18) + '<input id="q" class="inp" data-in="q" placeholder="Cari produk atau SKU" value="' + esc(S.q) + '" aria-label="Cari produk"></label>' +
+      '<div class="chips">' + cats.map(c => '<button class="chip ' + (c === S.cat ? 'on' : '') + '" data-act="cat" data-c="' + esc(c) + '">' + esc(c) + '</button>').join('') + '</div></div>' +
+      '<div class="grid" id="grid"></div>' +
+    '</div>' +
+    '<aside class="pos-side-cart" id="pos-side-cart">' + sideCartHtml() + '</aside>' +
+  '</div>';
   grid();
+  upd();
+}
+function sideCartHtml() {
+  const n = S.cart.reduce((a, l) => a + l.qty, 0);
+  return '<div class="sh-h" style="padding-bottom:8px;border-bottom:1px solid var(--line);margin-bottom:10px">' +
+    '<div><h3 style="margin:0;font:800 17px var(--head);color:var(--mar)">Daftar Pesanan</h3><span class="muted">' + esc(chName(S.ch)) + (n ? ' · ' + n + ' item' : '') + '</span></div>' +
+    '<button class="chip" data-act="clearcart" style="min-height:30px;font-size:11px;padding:0 8px">Kosongkan</button>' +
+  '</div>' +
+  '<div id="side-cl" class="side-cl">' + (S.cart.length ? sideCartLines() : '<div class="side-empty">' + svg('kasir', 36) + '<p class="muted" style="margin-top:8px">Keranjang masih kosong.<br>Pilih produk di sebelah kiri.</p></div>') + '</div>' +
+  '<div class="paybox" style="margin-top:8px">' +
+    '<div class="chips" id="side-mchips">' + methodChips() + '</div>' +
+    '<div id="side-cashbox">' + sideCashBoxHtml() + '</div>' +
+  '</div>' +
+  '<details class="more"' + (S.diskon || S.catatan ? ' open' : '') + '><summary>Diskon dan catatan</summary><label>Diskon (Rp)<input class="inp" data-in="diskon" inputmode="numeric" value="' + esc(S.diskon) + '"></label><label>Catatan<input class="inp" data-in="catatan" value="' + esc(S.catatan) + '"></label></details>' +
+  '<div id="side-tot" style="margin-top:8px"></div>' +
+  '<button class="btn pri big" id="side-paybtn" data-act="pay"' + (S.cart.length ? '' : ' disabled') + '>Bayar</button>';
+}
+function sideCartLines() {
+  return S.cart.map((l, i) => {
+    const v = vById(l.v), p = priceOf(l.v, S.ch) || 0;
+    return '<div class="li cl-i" style="padding:8px 10px;margin-bottom:6px">' +
+      '<div class="cl-n"><b style="font-size:13.5px">' + esc(vName(v)) + '</b><div class="muted" style="font-size:11.5px">' + esc(vSub(v)) + ' · ' + rp(p) + '</div></div>' +
+      '<div class="qty"><button data-act="dec" data-i="' + i + '" aria-label="Kurangi">−</button><span>' + l.qty + '</span><button data-act="inc" data-i="' + i + '" aria-label="Tambah">+</button></div>' +
+      '<b class="cl-t" style="font-size:13.5px">' + rp(p * l.qty) + '</b>' +
+    '</div>';
+  }).join('');
+}
+function sideCashBoxHtml() {
+  if (S.metode !== 'tunai') return '<p class="muted" style="font-size:12px;margin:4px 0">Pembayaran ' + esc(S.metode.toUpperCase()) + ' dicatat lunas saat disimpan.</p>';
+  const t = calc().total, q = [t].concat([5000, 10000, 20000, 50000, 100000].map(n => Math.ceil(t / n) * n)).filter((x, i, a) => x > 0 && a.indexOf(x) === i).slice(0, 4);
+  return '<label style="font-size:11.5px">Uang diterima (Rp)<input class="inp" data-in="terima" inputmode="numeric" placeholder="' + num(t) + '" value="' + esc(S.terima) + '" style="min-height:40px;margin-bottom:4px"></label>' +
+    '<div class="chips" style="padding:2px 0">' + q.map((x, i) => '<button class="chip" data-act="qk" data-n="' + x + '" style="min-height:30px;font-size:11px;padding:0 8px">' + (i === 0 ? 'Uang pas' : num(x)) + '</button>').join('') + '</div>';
 }
 function cardHtml(v) {
   const pr = priceOf(v.id, S.ch), st = Number(v.stok) || 0, q = cartQty(v.id);
@@ -309,11 +491,11 @@ function addToCart(id) {
   const l = S.cart.find(x => x.v === id), q = (l ? l.qty : 0) + 1, st = Number(v.stok) || 0;
   if (T(cfg('blokir_stok_minus')) && q > st) return toast(st > 0 ? 'Stok tidak cukup' : 'Stok habis');
   if (l) l.qty = q; else S.cart.push({v: id, qty: 1});
-  saveCart(); updCard(id); cartbar(); buzz();
+  saveCart(); updCard(id); upd(); buzz();
 }
 function dropFromCart(id) {
   const i = S.cart.findIndex(x => x.v === id); if (i < 0) return;
-  S.cart[i].qty--; if (S.cart[i].qty <= 0) S.cart.splice(i, 1); saveCart(); updCard(id); cartbar();
+  S.cart[i].qty--; if (S.cart[i].qty <= 0) S.cart.splice(i, 1); saveCart(); updCard(id); upd();
 }
 const methodChips = () => ['tunai', 'transfer', 'qris'].map(m => '<button class="chip ' + (S.metode === m ? 'on' : '') + '" data-act="metode" data-m="' + m + '">' + m.toUpperCase() + '</button>').join('');
 function cartLines() {
@@ -338,8 +520,20 @@ function upd() {
   const c = calc(), s = S.data.settings, kv = (a, b, cl) => '<div class="kv ' + (cl || '') + '"><span>' + a + '</span><span>' + b + '</span></div>', tunai = S.metode === 'tunai', terima = S.terima === '' ? null : Number(S.terima) || 0;
   let h = kv('Subtotal', rp(c.sub)); if (c.dis) h += kv('Diskon', '-' + rp(c.dis)); if (c.ppn) h += kv(T(s.ppn_inklusif) ? 'PPN (sudah termasuk)' : 'PPN', rp(c.ppn));
   h += kv('Total', rp(c.total), 'big'); if (tunai && terima !== null) h += kv(terima >= c.total ? 'Kembalian' : 'Kurang', rp(Math.abs(terima - c.total)), terima >= c.total ? 'ok-r' : 'err-r');
+
   const t = $('#tot'); if (t) t.innerHTML = h;
-  const b = $('#paybtn'); if (b) { const short = tunai && terima !== null && terima < c.total; b.disabled = short; b.textContent = short ? 'Uang kurang ' + rp(c.total - terima) : 'Bayar ' + rp(c.total); }
+  const b = $('#paybtn'); if (b) { const short = tunai && terima !== null && terima < c.total; b.disabled = short || !S.cart.length; b.textContent = short ? 'Uang kurang ' + rp(c.total - terima) : 'Bayar ' + rp(c.total); }
+
+  const st = $('#side-tot'); if (st) st.innerHTML = h;
+  const sb = $('#side-paybtn'); if (sb) { const short = tunai && terima !== null && terima < c.total; sb.disabled = short || !S.cart.length; sb.textContent = short ? 'Uang kurang ' + rp(c.total - terima) : 'Bayar ' + rp(c.total); }
+  const scl = $('#side-cl');
+  if (scl) scl.innerHTML = S.cart.length ? sideCartLines() : '<div class="side-empty">' + svg('kasir', 36) + '<p class="muted" style="margin-top:8px">Keranjang masih kosong.<br>Pilih produk di sebelah kiri.</p></div>';
+  const scb = $('#side-cashbox'); if (scb) scb.innerHTML = sideCashBoxHtml();
+  const smc = $('#side-mchips'); if (smc) smc.innerHTML = methodChips();
+  const scHdr = document.querySelector('#pos-side-cart .sh-h .muted');
+  const n = S.cart.reduce((a, l) => a + l.qty, 0);
+  if (scHdr) scHdr.textContent = chName(S.ch) + (n ? ' · ' + n + ' item' : '');
+
   cartbar();
 }
 function pay() {
@@ -558,7 +752,12 @@ function vSettings() {
   const s = S.data.settings, cb = (k, l) => '<label style="margin:8px 0"><input type="checkbox" data-f="' + k + '"' + (T(s[k]) ? ' checked' : '') + '> ' + l + '</label>';
   $('#main').innerHTML = '<button class="chip" data-act="tab" data-t="menu">← Menu</button><div id="sf" style="margin-top:8px">' + field(['nama_usaha', 'Nama usaha'], s.nama_usaha) + field(['footer_struk', 'Teks bawah struk'], s.footer_struk) +
     cb('ppn_aktif', 'PPN aktif') + field(['ppn_persen', 'Tarif PPN (%)', 'number'], s.ppn_persen) + cb('ppn_inklusif', 'Harga jual sudah termasuk PPN') + cb('blokir_stok_minus', 'Blokir penjualan jika stok kurang') + field(['lebar_struk', 'Lebar struk (32 = kertas 58 mm, 48 = kertas 80 mm)', 'sel:32,48'], s.lebar_struk || '32') + cb('auto_cetak', 'Langsung cetak Bluetooth (RawBT) setelah bayar') +
-    field(['overhead_per_unit', 'Overhead per bungkus (Rp, metode per_unit)', 'number'], s.overhead_per_unit) + field(['metode_overhead', 'Metode overhead produksi', 'sel:per_unit,per_batch'], s.metode_overhead || 'per_unit') + field(['overhead_per_batch', 'Overhead per batch (Rp, metode per_batch)', 'number'], s.overhead_per_batch) + field(['target_margin', 'Target margin minimum (%)', 'number'], s.target_margin || 30) + '</div><button class="btn pri" data-act="ssave">Simpan pengaturan</button>';
+    field(['overhead_per_unit', 'Overhead per bungkus (Rp, metode per_unit)', 'number'], s.overhead_per_unit) + field(['metode_overhead', 'Metode overhead produksi', 'sel:per_unit,per_batch'], s.metode_overhead || 'per_unit') + field(['overhead_per_batch', 'Overhead per batch (Rp, metode per_batch)', 'number'], s.overhead_per_batch) + field(['target_margin', 'Target margin minimum (%)', 'number'], s.target_margin || 30) + '</div><button class="btn pri" data-act="ssave">Simpan pengaturan</button>' +
+    '<div class="card-s" style="margin-top:20px"><h3>📦 Pemeliharaan & Arsip Database</h3>' +
+    '<p class="muted">Pindahkan transaksi penjualan lama ke sheet arsip terpisah (<code>sales_archive</code>) agar spreadsheet tetap cepat, ramping, dan di bawah kuota Google Sheets.</p>' +
+    '<label>Arsipkan transaksi lebih lama dari:<select id="arch_days" class="inp"><option value="90">90 Hari (3 Bulan)</option><option value="180" selected>180 Hari (6 Bulan)</option><option value="365">365 Hari (1 Tahun)</option></select></label>' +
+    '<button class="btn sec" data-act="run_archive">📦 Jalankan Pengarsipan Data</button>' +
+    '<div id="arch_res" style="margin-top:8px"></div></div>';
 }
 async function sSave() {
   return busy('Menyimpan pengaturan…', async () => {
@@ -577,9 +776,55 @@ const ACT = {
   inc1: el => addToCart(el.dataset.v), dec1: el => dropFromCart(el.dataset.v),
   inc: el => { const l = S.cart[el.dataset.i]; if (!l) return; const st = Number(vById(l.v).stok) || 0; if (T(cfg('blokir_stok_minus')) && l.qty + 1 > st) return toast('Stok tidak cukup'); l.qty++; saveCart(); cartLines(); upd(); updCard(l.v); buzz(); },
   dec: el => { const l = S.cart[el.dataset.i]; if (!l) return; const id = l.v; l.qty--; if (l.qty <= 0) S.cart.splice(el.dataset.i, 1); saveCart(); if (!S.cart.length) closeSheet(); else cartLines(); upd(); updCard(id); },
+  clearcart: () => {
+    if (!S.cart.length) return;
+    if (confirm('Kosongkan semua pesanan di keranjang?')) {
+      S.cart = []; S.diskon = ''; S.terima = ''; S.catatan = '';
+      saveCart();
+      grid();
+      upd();
+      toast('Keranjang dikosongkan');
+    }
+  },
   metode: el => { S.metode = el.dataset.m; LS.set('metode', S.metode); const c = $('#mchips'); if (c) c.innerHTML = methodChips(); cashBox(); upd(); },
   qk: el => { S.terima = el.dataset.n; cashBox(); upd(); },
   wa: () => waSend(S.rc, ($('#wa') || {}).value), rawbt: () => printBT(S.rc), print: () => printBrowser(), share: () => shareRc(S.rc), copyrc: () => copyText(receiptText(S.rc)),
+  badge_info: badgeInfoSheet,
+  sync_flush: async () => {
+    closeSheet();
+    await busy('Mengirim antrean…', async () => {
+      await flush();
+      toast('Sinkronisasi selesai');
+    });
+    badge();
+  },
+  test_ping: async () => {
+    toast('Menguji respon server…');
+    const t0 = performance.now();
+    try {
+      await api('ping', {}, {silent: true});
+      toast('Server terhubung (' + Math.round(performance.now() - t0) + ' ms)');
+    } catch (e) {
+      toast('Gagal terhubung: ' + e.message);
+    }
+  },
+  run_archive: async () => {
+    const sel = $('#arch_days');
+    const days = sel ? (Number(sel.value) || 180) : 180;
+    if (!confirm('Arsipkan transaksi yang lebih lama dari ' + days + ' hari ke sheet arsip terpisah?')) return;
+    await busy('Mengarsipkan data lama…', async () => {
+      try {
+        const res = await api('system.archive', {days: days});
+        const el = $('#arch_res');
+        if (el) el.innerHTML = '<span class="ok-r" style="font-size:13px">✅ Berhasil mengarsipkan ' + (res.archived_sales || 0) + ' penjualan (' + (res.archived_items || 0) + ' item baris, ' + (res.archived_movements || 0) + ' mutasi stok) sebelum tanggal ' + res.cutoff + '.</span>';
+        toast('Pengarsipan selesai');
+      } catch (e) {
+        const el = $('#arch_res');
+        if (el) el.innerHTML = '<span class="err-r" style="font-size:13px">Gagal: ' + esc(e.message) + '</span>';
+        toast('Gagal: ' + e.message);
+      }
+    });
+  },
   go_diag: () => { S.tab = 'diag'; render(); },
   dtwa: () => waSend(testRc(), ''), dtbt: () => printBT(testRc()), dtshare: () => shareRc(testRc()),
   dping: async () => { const el = $('#dres'); el.textContent = 'Menguji…'; const t0 = performance.now(); try { await api('ping', {}, {silent: true}); el.textContent = 'Berhasil: ' + Math.round(performance.now() - t0) + ' ms'; } catch (e) { el.textContent = 'Gagal: ' + e.message; logErr(e, 'ping'); } },
@@ -633,7 +878,18 @@ window.addEventListener('online', () => { badge(); flush(); checkUpdates(true); 
 window.addEventListener('offline', badge);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { checkUpdates(); flush(); if (swReg) swReg.update().catch(() => {}); } });
 function start() { if (S.token && S.data) { S.tab = own() ? 'dash' : 'kasir'; render(); checkUpdates(true); flush(); } else renderLogin(); }
+async function initApp() {
+  await DB.init();
+  S.token = DB.get('token', null);
+  S.data = DB.get('data', null);
+  S.queue = DB.get('queue', []);
+  S.cart = DB.get('cart', []);
+  S.ch = DB.get('ch', null);
+  S.metode = DB.get('metode', 'tunai');
+  start();
+}
+initApp();
 Object.assign(APP.views, {kasir: vKasir, riwayat: vRiwayat, stok: vStok, menu: vMenu, master: vMaster, users: vUsers, settings: vSettings, diag: vDiag});
-Object.assign(APP, {S: S, api: api, $: $, rp: rp, num: num, parseDec: parseDec, esc: esc, LS: LS, T: T, sheet: sheet, closeSheet: closeSheet, toast: toast, busy: busy, busyLabel: busyLabel, skel: skel, ACT: ACT, autoGenSku: autoGenSku,
+Object.assign(APP, {S: S, DB: DB, api: api, $: $, rp: rp, num: num, parseDec: parseDec, esc: esc, LS: LS, T: T, sheet: sheet, closeSheet: closeSheet, toast: toast, busy: busy, busyLabel: busyLabel, skel: skel, ACT: ACT, autoGenSku: autoGenSku,
   render: render, loadData: loadData, checkUpdates: checkUpdates, vById: vById, pById: pById, vName: vName, vSub: vSub, chName: chName, fmtDT: fmtDT, today: today, own: own, start: start});
 })();
