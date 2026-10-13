@@ -13,7 +13,7 @@ S.dp = 'hari'; S.pform = {jenis: 'batch', recipe: '', batch: '1', catatan: ''}; 
 
 /* ---------- Beranda (dashboard) ---------- */
 function vDash() {
-  $('#main').innerHTML = '<div class="chips">' + [['hari', 'Hari ini'], ['minggu', '7 hari'], ['bulan', 'Bulan ini']].map(p => '<button class="chip ' + (S.dp === p[0] ? 'on' : '') + '" data-act="dp" data-p="' + p[0] + '">' + p[1] + '</button>').join('') + '<button class="chip" data-act="dp" data-p="' + S.dp + '">↻ Muat ulang</button></div><div id="dbody"></div>';
+  $('#main').innerHTML = '<div class="chips">' + [['hari', 'Hari ini'], ['minggu', '7 hari'], ['bulan', 'Bulan ini']].map(p => '<button class="chip ' + (S.dp === p[0] ? 'on' : '') + '" data-act="dp" data-p="' + p[0] + '">' + p[1] + '</button>').join('') + '<button class="chip" data-act="dp" data-p="' + S.dp + '" aria-label="Muat ulang">↻</button></div><div id="dbody"></div>';
   const key = 'dash_' + S.dp, cached = LS.get(key, null), want = S.dp;
   if (cached) drawDash(cached); else $('#dbody').innerHTML = skel(4);
   api('dashboard.get', {period: want}).then(d => { LS.set(key, d); if (S.tab === 'dash' && S.dp === want && $('#dbody')) drawDash(d); })
