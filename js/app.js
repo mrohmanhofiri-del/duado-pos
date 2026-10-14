@@ -175,15 +175,17 @@ function genSkuLocal(f, selfId) {
   let sku = base, i = 2; while (taken.has(sku)) sku = base + '-' + i++; return sku;
 }
 const buzz = () => { try { navigator.vibrate && navigator.vibrate(12); } catch (e) {} };
-function logErr(e, ctx) { try { const l = LS.get('errlog', []); l.unshift({t: Date.now(), c: ctx || '', m: String((e && e.message) || e), s: String((e && e.stack) || '').split('\n').slice(0, 3).join(' | ')}); LS.set('errlog', l.slice(0, 20)); } catch (x) {} }
-window.addEventListener('error', ev => logErr(ev.error || ev.message, 'error'));
+/* Galat milik ekstensi browser (chrome-extension://, moz-extension://, dan sejenisnya) bukan galat aplikasi: tidak dicatat */
+const foreign = e => { const t = String((e && e.stack) || '') + ' ' + String((e && e.filename) || ''); return /(chrome|moz|safari-web|ms-browser)-extension:\/\//.test(t) && t.indexOf(location.origin) < 0; };
+function logErr(e, ctx) { if (foreign(e)) return; try { const l = LS.get('errlog', []); l.unshift({t: Date.now(), c: ctx || '', m: String((e && e.message) || e), s: String((e && e.stack) || '').split('\n').slice(0, 3).join(' | ')}); LS.set('errlog', l.slice(0, 20)); } catch (x) {} }
+window.addEventListener('error', ev => { if (/-extension:\/\//.test(String(ev.filename || ''))) return; logErr(ev.error || ev.message, 'error'); });
 window.addEventListener('unhandledrejection', ev => logErr(ev.reason, 'promise'));
 /* struk: satu sumber teks untuk layar, WhatsApp, dan printer; lebar mengikuti pengaturan (32 = 58 mm, 48 = 80 mm) */
 const rcWidth = () => Number(cfg('lebar_struk')) === 48 ? 48 : 32;
 const wrapTxt = (t, w) => { const o = []; t = String(t); while (t.length > w) { o.push(t.slice(0, w)); t = t.slice(w); } o.push(t); return o; };
 function receiptLines(rc, w) {
   w = w || rcWidth(); const line = '-'.repeat(w), L = (a, b) => { a = String(a); b = String(b); return a + ' '.repeat(Math.max(1, w - a.length - b.length)) + b; };
-  const o = [(cfg('nama_usaha') || 'Duado Snack').toUpperCase(), line, 'No : ' + (S.nomor[rc.rid] || '(menunggu sinkron)'), 'Tgl: ' + fmtDT(rc.time), 'Via: ' + rc.ch, line];
+  const o = [String(cfg('nama_usaha') || 'Duado Snack').toUpperCase(), line, 'No : ' + (S.nomor[rc.rid] || '(menunggu sinkron)'), 'Tgl: ' + fmtDT(rc.time), 'Via: ' + rc.ch, line];
   rc.lines.forEach(l => { wrapTxt(l.n, w).forEach(x => o.push(x)); o.push(L(' ' + l.q + ' x ' + num(l.h), num(l.q * l.h))); });
   o.push(line, L('Subtotal', num(rc.sub))); if (rc.dis) o.push(L('Diskon', '-' + num(rc.dis))); if (rc.ppn) o.push(L(T(cfg('ppn_inklusif')) ? 'PPN (incl.)' : 'PPN', num(rc.ppn)));
   o.push(L('TOTAL', num(rc.total)), L('Bayar (' + rc.metode + ')', num(rc.terima))); if (rc.metode === 'tunai') o.push(L('Kembali', num(rc.kembali)));
@@ -242,9 +244,10 @@ function waSend(rc, number) {
   let n = String(number || '').replace(/\D/g, ''); if (n.indexOf('0') === 0) n = '62' + n.slice(1); else if (n.indexOf('8') === 0) n = '62' + n;
   go((n ? 'https://wa.me/' + n : 'https://api.whatsapp.com/send') + '?text=' + encodeURIComponent('```' + receiptText(rc) + '```'), true);
 }
-async function copyText(t) {
-  try { await navigator.clipboard.writeText(t); toast('Struk disalin. Tempel di WhatsApp atau aplikasi lain.'); }
-  catch (e) { const ta = document.createElement('textarea'); ta.value = t; ta.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(ta); ta.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (x) {} ta.remove(); toast(ok ? 'Struk disalin.' : 'Tidak bisa menyalin struk.'); }
+async function copyText(t, msg) {
+  msg = msg || 'Struk disalin. Tempel di WhatsApp atau aplikasi lain.';
+  try { await navigator.clipboard.writeText(t); toast(msg); }
+  catch (e) { const ta = document.createElement('textarea'); ta.value = t; ta.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(ta); ta.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (x) {} ta.remove(); toast(ok ? msg : 'Tidak bisa menyalin.'); }
 }
 async function shareRc(rc) {
   const text = receiptText(rc);
@@ -276,7 +279,7 @@ function render() {
   const d = S.data; if (!S.ch || !d.channels.some(c => c.id === S.ch)) S.ch = d.channels[0] && d.channels[0].id;
   const o = own(), tabs = o ? [['dash', 'Beranda'], ['kasir', 'Kasir'], ['stok', 'Stok'], ['produksi', 'Produksi'], ['menu', 'Menu']] : [['kasir', 'Kasir'], ['riwayat', 'Riwayat'], ['stok', 'Stok'], ['menu', 'Menu']],
     inMenu = MENU_TABS.concat(o ? ['riwayat'] : []).indexOf(S.tab) >= 0;
-  $('#app').innerHTML = '<header class="top"><img class="logo" src="icons/icon-192.png" alt="" width="38" height="38"><div class="brand"><b class="wordmark">' + esc((d.settings.nama_usaha || 'Duado Snack').toUpperCase()) + '</b><small>Jajanan Cemilan Pedas</small></div><button class="badge" id="badge" data-act="queue" aria-label="Status sinkronisasi"></button></header><div class="accent"></div><main id="main"></main><div id="cartbar"></div>' +
+  $('#app').innerHTML = '<header class="top"><img class="logo" src="icons/icon-192.png" alt="" width="38" height="38"><div class="brand"><b class="wordmark">' + esc(String(d.settings.nama_usaha || 'Duado Snack').toUpperCase()) + '</b><small>Jajanan Cemilan Pedas</small></div><button class="badge" id="badge" data-act="queue" aria-label="Status sinkronisasi"></button></header><div class="accent"></div><main id="main"></main><div id="cartbar"></div>' +
     '<nav class="nav">' + tabs.map(t => '<button data-act="tab" data-t="' + t[0] + '" class="' + ((S.tab === t[0] || (t[0] === 'menu' && inMenu)) ? 'on' : '') + '"><span class="ni">' + svg(t[0], 22) + '</span><span>' + t[1] + '</span></button>').join('') + '</nav>';
   badge();
   (APP.views[S.tab] || vKasir)();
@@ -324,7 +327,7 @@ const chShort = n => /whatsapp/i.test(n) ? 'WA / IG' : n;
 const isWide = () => !!(window.matchMedia && matchMedia('(min-width: 900px)').matches); // tablet: layar terbagi, daftar produk kiri dan pesanan kanan
 function vKasir() {
   const d = S.data, wide = isWide(); S.cart = S.cart.filter(l => vById(l.v));
-  const withV = new Set(d.variants.map(v => v.product_id)), cats = ['Semua'].concat(Array.from(new Set(d.products.filter(p => withV.has(p.id)).map(p => p.kategori).filter(Boolean)))), noV = d.products.filter(p => !withV.has(p.id)).length;
+  const withV = new Set(d.variants.map(v => v.product_id)), cats = ['Semua'].concat(Array.from(new Set(d.products.filter(p => withV.has(p.id)).map(p => String(p.kategori == null ? '' : p.kategori)).filter(Boolean)))), noV = d.products.filter(p => !withV.has(p.id)).length;
   if (S.cat !== 'Semua' && cats.indexOf(S.cat) < 0) S.cat = 'Semua';
   const top = '<div class="kasir-top">' + (own() && noV ? '<div class="notice"><span>' + noV + ' produk belum punya varian, jadi belum tampil di sini.</span><button class="chip" data-act="go_cek">Periksa data</button></div>' : '') + '<button id="qstat" data-act="queue"></button>' +
     '<div class="seg">' + d.channels.map(c => '<button class="' + (c.id === S.ch ? 'on' : '') + '" data-act="chan" data-c="' + esc(c.id) + '">' + esc(chShort(c.nama)) + '</button>').join('') + '</div>' +
@@ -343,7 +346,7 @@ function cardHtml(v) {
 }
 function grid() {
   const d = S.data, q = S.q.toLowerCase(), block = T(d.settings.blokir_stok_minus);
-  const list = d.variants.filter(v => (S.cat === 'Semua' || (pById(v.product_id) || {}).kategori === S.cat) && (!q || (vName(v) + ' ' + vSub(v) + ' ' + v.sku).toLowerCase().indexOf(q) >= 0));
+  const list = d.variants.filter(v => (S.cat === 'Semua' || String((pById(v.product_id) || {}).kategori) === S.cat) && (!q || (vName(v) + ' ' + vSub(v) + ' ' + v.sku).toLowerCase().indexOf(q) >= 0));
   $('#grid').innerHTML = list.map(v => {
     const pr = priceOf(v.id, S.ch), st = Number(v.stok) || 0, off = pr == null || (block && st <= 0), n = heatN(v.level_pedas);
     return '<div class="card pc h' + (n < 0 ? 'x' : n) + (off ? ' off' : '') + (cartQty(v.id) ? ' in' : '') + '" data-act="add" data-v="' + esc(v.id) + '" role="button" tabindex="0">' + cardHtml(v) + '</div>';
@@ -445,11 +448,11 @@ async function vRiwayat() {
     (q.status === 'review' ? '<div><button class="chip" data-act="qretry" data-i="' + i + '">Coba lagi</button> <button class="chip" data-act="qdel" data-i="' + i + '">Hapus</button></div>' : '') + '</div></div>').join('');
   $('#rq').innerHTML = qs;
   try {
-    const rows = await api('sales.list', {tanggal: day}); if (S.tab !== 'riwayat') return;
+    const rows = await api('sales.list', {tanggal: day}); if (S.tab !== 'riwayat' || !$('#rlist')) return;
     const done = rows.filter(r => r.status === 'selesai');
     $('#rsum').innerHTML = '<div class="li"><div><div class="muted">Omzet ' + day + '</div><b style="font-size:20px">' + rp(done.reduce((a, r) => a + Number(r.total), 0)) + '</b></div><div class="r"><div class="muted">Transaksi</div><b style="font-size:20px">' + done.length + '</b></div></div>';
     $('#rlist').innerHTML = rows.map(r => '<div class="li"><div><b>' + esc(r.nomor) + '</b><div class="muted">' + esc(String(r.tanggal).slice(11, 16)) + ' · ' + esc(chName(r.channel_id)) + ' · ' + esc(r.metode_bayar) + '</div></div><b>' + rp(r.total) + '</b></div>').join('') || '<p class="muted">Belum ada transaksi.</p>';
-  } catch (e) { $('#rlist').innerHTML = '<p class="muted">Tidak bisa memuat riwayat dari server (' + esc(e.message) + ').</p>'; }
+  } catch (e) { if ($('#rlist')) $('#rlist').innerHTML = '<p class="muted">Tidak bisa memuat riwayat dari server (' + esc(e.message) + ').</p>'; }
 }
 
 /* ---------- Stok dan pembelian ---------- */
@@ -516,7 +519,7 @@ function vDiag() {
     '<div class="card-s"><h3>Printer Bluetooth</h3>' + kv('Android (RawBT)', isAndroid() ? 'Ya' : 'Tidak') + kv('iPhone / iPad', isIOS() ? 'Ya' : 'Tidak') + kv('Web Bluetooth (BLE langsung)', navigator.bluetooth ? 'Tersedia' : 'Tidak tersedia') + kv('Printer tersimpan', esc(LS.get('btname', '') || '-')) + '<label style="margin:8px 0"><input type="checkbox" data-act="btdirect"' + (LS.get('btdirect', false) ? ' checked' : '') + '> Cetak langsung via BLE (tanpa RawBT)</label><button class="btn sec" data-act="btpick">Pilih printer BLE</button>' + (isIOS() ? '<p class="muted">iPhone: gunakan browser dengan Web Bluetooth (mis. Bluefy) dan printer BLE.</p>' : '') + '</div>' +
     '<div class="card-s"><h3>Uji struk</h3><p class="muted">Memeriksa WhatsApp dan printer tanpa membuat transaksi.</p><div class="row2"><button class="btn wa" data-act="dtwa">Uji WhatsApp</button><button class="btn dark" data-act="dtbt">Uji cetak Bluetooth</button></div><button class="btn sec" data-act="dtshare">Uji Bagikan</button>' +
     '<p class="muted">Cetak Bluetooth memakai aplikasi <b>RawBT</b> (Android): pasang dari Play Store, pasangkan printer di dalam RawBT, lalu coba cetak dari RawBT dulu.</p></div>' +
-    '<div class="card-s"><h3>Catatan kesalahan</h3>' + (errs.length ? errs.slice(0, 8).map(e => '<div class="muted" style="margin-bottom:6px">' + esc(fmtDT(e.t).slice(5)) + ' · ' + esc(e.c) + ': ' + esc(e.m) + '</div>').join('') : '<p class="muted">Belum ada.</p>') + '<button class="btn sec" data-act="dcopy">Salin log</button></div>';
+    '<div class="card-s"><h3>Catatan kesalahan</h3>' + (errs.length ? errs.slice(0, 8).map(e => '<div class="muted" style="margin-bottom:6px">' + esc(fmtDT(e.t).slice(5)) + ' · ' + esc(e.c) + ': ' + esc(e.m) + '</div>').join('') : '<p class="muted">Belum ada.</p>') + '<div class="row2"><button class="btn sec" data-act="dcopy">Salin log</button><button class="btn sec" data-act="dclear">Hapus catatan</button></div><p class="muted">Galat dari ekstensi browser tidak ikut dicatat.</p></div>';
 }
 const RT = {};
 const MT = {
@@ -568,8 +571,8 @@ async function mDel(id) {
 }
 async function vUsers() {
   $('#main').innerHTML = '<button class="chip" data-act="tab" data-t="menu">← Menu</button><button class="btn pri" data-act="uedit" data-id="">+ Tambah pengguna</button><div id="ul">' + skel(3) + '</div>';
-  try { S.users = await api('user.list'); $('#ul').innerHTML = S.users.map(u => '<button class="li" style="width:100%;border:0;font:inherit;text-align:left;margin-top:8px" data-act="uedit" data-id="' + esc(u.id) + '"><span><b>' + esc(u.nama) + '</b> <span class="muted">@' + esc(u.username) + ' · ' + esc(u.role) + '</span></span>' + (String(u.aktif) === 'false' ? '<span class="tag red">Nonaktif</span>' : '') + '</button>').join(''); }
-  catch (e) { $('#ul').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
+  try { S.users = await api('user.list'); if (!$('#ul')) return; $('#ul').innerHTML = S.users.map(u => '<button class="li" style="width:100%;border:0;font:inherit;text-align:left;margin-top:8px" data-act="uedit" data-id="' + esc(u.id) + '"><span><b>' + esc(u.nama) + '</b> <span class="muted">@' + esc(u.username) + ' · ' + esc(u.role) + '</span></span>' + (String(u.aktif) === 'false' ? '<span class="tag red">Nonaktif</span>' : '') + '</button>').join(''); }
+  catch (e) { if ($('#ul')) $('#ul').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
 }
 function ueditSheet(id) {
   const u = id ? S.users.find(x => x.id === id) : {role: 'kasir', aktif: true};
@@ -613,11 +616,12 @@ const ACT = {
   queue: queueSheet, qnow: () => { flush(); setTimeout(() => { if (S.qopen) queueSheet(); }, 700); },
   btdirect: el => { LS.set('btdirect', !!el.checked); toast(el.checked ? 'Cetak langsung via BLE aktif' : 'Cetak lewat RawBT (Android)'); },
   btpick: async () => { try { await btConnect(true); toast('Printer dipilih: ' + (BT.dev.name || 'tanpa nama')); vDiag(); } catch (e) { toast(e && e.name === 'NotFoundError' ? 'Pemilihan printer dibatalkan' : 'Gagal: ' + (e.message || e)); } },
-  copyurl: () => copyText(location.href.split('#')[0]),
   skugen: el => { const f = {}; document.querySelectorAll('#sheet [data-f]').forEach(e => f[e.dataset.f] = e.value); if (!f.product_id) return toast('Pilih produk dulu'); const i = document.querySelector('#sheet [data-f=sku]'); if (i) i.value = genSkuLocal(f, el.dataset.id || ''); },
   dtwa: () => waSend(testRc(), ''), dtbt: () => printBT(testRc()), dtshare: () => shareRc(testRc()),
   dping: async () => { const el = $('#dres'); el.textContent = 'Menguji…'; const t0 = performance.now(); try { await api('ping', {}, {silent: true}); el.textContent = 'Berhasil: ' + Math.round(performance.now() - t0) + ' ms'; } catch (e) { el.textContent = 'Gagal: ' + e.message; logErr(e, 'ping'); } },
-  dcopy: () => copyText(JSON.stringify({v: C.VERSION, ua: navigator.userAgent, online: navigator.onLine, queue: S.queue.length, err: LS.get('errlog', [])}, null, 1)),
+  dcopy: () => copyText(JSON.stringify({v: C.VERSION, ua: navigator.userAgent, online: navigator.onLine, queue: S.queue.length, penyimpanan: Store.mode(), err: LS.get('errlog', [])}, null, 1), 'Log disalin. Tempel untuk dikirim.'),
+  dclear: () => { LS.set('errlog', []); vDiag(); toast('Catatan kesalahan dihapus'); },
+  copyurl: () => copyText(location.href.split('#')[0], 'Alamat aplikasi disalin.'),
   qretry: el => { const q = S.queue[el.dataset.i]; if (q) { q.status = 'pending'; q.state = 'waiting'; q.error = ''; } LS.set('queue', S.queue); qrefresh(); flush(); },
   qdel: el => { if (confirm('Hapus transaksi ini dari antrean? Stok di perangkat akan dikembalikan.')) { const q = S.queue.splice(el.dataset.i, 1)[0]; q.payload.items.forEach(it => { const v = vById(it.variant_id); if (v) v.stok = r6((Number(v.stok) || 0) + it.qty); }); LS.set('queue', S.queue); LS.set('data', S.data); badge(); qrefresh(); } },
   stab: el => { S.stab = el.dataset.s; vStok(); },

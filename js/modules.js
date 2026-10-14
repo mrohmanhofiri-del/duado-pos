@@ -292,7 +292,8 @@ async function stockAudit() {
   try {
     const r = await api('stock.audit', {}); if (!$('#caud')) return;
     $('#caud').innerHTML = '<p class="muted">' + num(r.diperiksa) + ' item diperiksa.</p>' + (r.selisih.length ? r.selisih.map(x => '<div class="li" style="display:block"><div class="kv"><b>' + esc(x.nama) + '</b><span class="tag red">Selisih ' + dec(x.selisih) + '</span></div><div class="muted">Stok tercatat ' + dec(x.stok) + ' · menurut riwayat ' + dec(x.riwayat) + '</div>' +
-      '<button class="chip" data-act="creco" data-t="' + x.tipe + '" data-id="' + esc(x.id) + '">Terima stok tercatat</button> <button class="chip" data-act="adj" data-t="' + x.tipe + '" data-id="' + esc(x.id) + '">Hitung ulang (opname)</button></div>').join('') : '<p style="color:var(--ok);font-weight:800">Semua stok sesuai dengan riwayat.</p>');
+      '<button class="chip" data-act="creco" data-t="' + x.tipe + '" data-id="' + esc(x.id) + '">Terima stok tercatat</button> <button class="chip" data-act="adj" data-t="' + x.tipe + '" data-id="' + esc(x.id) + '">Hitung ulang (opname)</button></div>').join('') : '<p style="color:var(--ok);font-weight:800">Semua stok sesuai dengan riwayat.</p>') +
+      (r.penjualan_tanpa_item && r.penjualan_tanpa_item.length ? '<div class="li" style="display:block"><div class="kv"><b>Penjualan tanpa rincian item</b><span class="tag red">' + r.penjualan_tanpa_item.length + '</span></div><div class="muted">' + r.penjualan_tanpa_item.map(x => esc(x.nomor) + ' (' + rp(x.total) + ')').join(', ') + '</div><div class="muted">Transaksi ini tersimpan setengah. Periksa tab sales dan sale_items di Google Sheets.</div></div>' : '<p class="muted">Tidak ada penjualan tanpa rincian item.</p>');
   } catch (e) { if ($('#caud')) $('#caud').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
 }
 
