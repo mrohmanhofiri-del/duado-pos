@@ -5,7 +5,8 @@ const A = window.APP, S = A.S, $ = A.$, api = A.api, rp = A.rp, num = A.num, esc
 const set = k => S.data.settings[k];
 const mById = id => S.data.materials.find(m => m.id === id);
 const pct = n => (Math.round(Number(n) * 10) / 10).toLocaleString('id-ID') + '%';
-const dec = n => { const x = Number(n) || 0; return Number.isInteger(x) ? x.toLocaleString('id-ID') : x.toLocaleString('id-ID', {minimumFractionDigits: 0, maximumFractionDigits: 4}); };
+const dec = n => (Math.round(Number(n) * 1000) / 1000).toLocaleString('id-ID', {maximumFractionDigits: 3});
+const N = A.dnum, r6 = A.r6;
 const p2 = n => ('0' + n).slice(-2);
 const kv = (a, b, cl) => '<div class="kv ' + (cl || '') + '"><span>' + a + '</span><span>' + b + '</span></div>';
 const vLabel = id => { const v = A.vById(id); return v ? A.vName(v) + ' ' + A.vSub(v) : '(produk dihapus)'; };
@@ -51,13 +52,13 @@ function drawDash(d) {
 const recItems = id => S.data.recipe_items.filter(i => i.recipe_id === id);
 function costOf(items, rec, batch, qty, tk, oh) {
   let bahan = 0, kem = 0; const need = {}, blank = x => x === '' || x == null;
-  items.forEach(i => { need[i.material_id] = (need[i.material_id] || 0) + (A.parseDec(i.qty) || 0) * batch; });
+  items.forEach(i => { need[i.material_id] = (need[i.material_id] || 0) + Number(i.qty) * batch; });
   const lines = Object.keys(need).map(id => {
     const m = mById(id) || {nama: '(bahan dihapus)', satuan: '', stok: 0, hpp_rata2: 0, tipe: 'bahan'}, q = need[id], c = q * (Number(m.hpp_rata2) || 0);
     if (m.tipe === 'kemasan') kem += c; else bahan += c; return {nama: m.nama, satuan: m.satuan, q: q, stok: Number(m.stok) || 0, ok: (Number(m.stok) || 0) >= q};
   });
-  const tkv = blank(tk) ? (Number(rec.tenaga_kerja) || 0) * batch : Number(tk) || 0;
-  const ohv = blank(oh) ? (set('metode_overhead') === 'per_batch' ? (Number(set('overhead_per_batch')) || 0) * batch : (Number(set('overhead_per_unit')) || 0) * qty) : Number(oh) || 0;
+  const tkv = blank(tk) ? (N(rec.tenaga_kerja) || 0) * batch : N(tk) || 0;
+  const ohv = blank(oh) ? (set('metode_overhead') === 'per_batch' ? (Number(set('overhead_per_batch')) || 0) * batch : (Number(set('overhead_per_unit')) || 0) * qty) : N(oh) || 0;
   const total = bahan + kem + tkv + ohv; return {lines: lines, short: lines.filter(l => !l.ok), bahan: bahan, kem: kem, tk: tkv, oh: ohv, total: total, hpp: qty > 0 ? total / qty : 0};
 }
 function costHtml(c) {
@@ -84,15 +85,12 @@ function prodNew() {
   if (!recs.some(r => r.id === f.recipe)) f.recipe = recs[0] ? recs[0].id : '';
   sheet('<h2>Produksi baru</h2><div class="chips">' + Object.keys(JN).map(k => '<button class="chip ' + (f.jenis === k ? 'on' : '') + '" data-act="pjenis" data-j="' + k + '">' + JN[k] + '</button>').join('') + '</div>' +
     (recs.length ? '<label>Resep<select class="inp" data-pf="recipe">' + recs.map(r => '<option value="' + esc(r.id) + '"' + (r.id === f.recipe ? ' selected' : '') + '>' + esc(r.nama) + ' → ' + esc(vLabel(r.variant_id)) + '</option>').join('') + '</select></label>' +
-      '<label>Jumlah batch<input class="inp" data-pf="batch" inputmode="decimal" value="' + esc(f.batch) + '"></label><label>' + (f.jenis === 'pesanan' ? 'Referensi pesanan (nama/nomor)' : 'Catatan') + '<input class="inp" data-pf="catatan" value="' + esc(f.catatan) + '"></label><div id="pv"></div>' +
-      '<button class="btn pri" data-act="psave_direct">⚡ Selesaikan langsung & masuk stok</button>' +
-      '<button class="btn sec" data-act="psave" style="margin-top:6px">Simpan rencana saja</button>' +
-      '<p class="muted" style="margin-top:6px;font-size:12px">⚡ Selesaikan langsung: stok bahan otomatis dipotong, stok varian bertambah, dan HPP rata-rata diperbarui seketika.</p>'
+      '<label>Jumlah batch<input class="inp" data-pf="batch" inputmode="decimal" value="' + esc(f.batch) + '"></label><label>' + (f.jenis === 'pesanan' ? 'Referensi pesanan (nama/nomor)' : 'Catatan') + '<input class="inp" data-pf="catatan" value="' + esc(f.catatan) + '"></label><div id="pv"></div><button class="btn pri" data-act="psave">Simpan rencana produksi</button>'
       : '<p class="muted">Belum ada resep untuk jenis ini. Buat di Produksi, Resep.</p>'));
   pv();
 }
 function pv() {
-  const el = $('#pv'); if (!el) return; const rec = S.data.recipes.find(r => r.id === S.pform.recipe), b = A.parseDec(S.pform.batch);
+  const el = $('#pv'); if (!el) return; const rec = S.data.recipes.find(r => r.id === S.pform.recipe), b = N(S.pform.batch);
   if (!rec || !(b > 0)) { el.innerHTML = ''; return; }
   const qty = Number(rec.hasil_standar) * b, c = costOf(recItems(rec.id), rec, b, qty, '', '');
   el.innerHTML = '<p class="muted">Estimasi hasil ' + num(qty) + ' unit</p>' + costHtml(c) + (c.short.length ? '<p class="err">Stok kurang: ' + esc(c.short.map(x => x.nama).join(', ')) + '. Rencana tetap bisa disimpan, tetapi tidak bisa diselesaikan sebelum stok cukup.</p>' : '');
@@ -114,7 +112,7 @@ function prodDone(id) {
   pdv();
 }
 function pdv() {
-  const o = S.prod.find(x => x.id === S.pd.id), rec = S.data.recipes.find(r => r.id === o.recipe_id), q = Number(S.pd.qty), el = $('#pdv'); if (!el) return;
+  const o = S.prod.find(x => x.id === S.pd.id), rec = S.data.recipes.find(r => r.id === o.recipe_id), q = N(S.pd.qty), el = $('#pdv'); if (!el) return;
   if (!(q > 0)) { el.innerHTML = '<p class="err">Isi hasil aktual</p>'; return; }
   const c = costOf(recItems(rec.id), rec, Number(o.jumlah_batch), q, S.pd.tk, S.pd.oh), v = A.vById(o.variant_id), pos = Math.max(Number(v && v.stok) || 0, 0), lama = Number(v && v.hpp_rata2) || 0, baru = (pos * lama + q * c.hpp) / (pos + q);
   el.innerHTML = costHtml(c) + '<div class="li" style="display:block">' + kv('Susut vs standar', dec(o.qty_standar - q) + ' unit') + kv('HPP produk (rata-rata)', rp(lama) + ' → ' + rp(baru)) + '</div>' + (c.short.length ? '<p class="err">Stok bahan kurang, tidak bisa diselesaikan.</p>' : '');
@@ -126,33 +124,47 @@ function vResep() {
   $('#main').innerHTML = '<button class="chip" data-act="tab" data-t="menu">← Menu</button> <button class="chip" data-act="tab" data-t="produksi">Produksi</button><button class="btn pri" data-act="redit" data-id="" style="margin-top:8px">+ Resep baru</button><div style="height:8px"></div>' +
     (S.data.recipes.map(r => { const c = costOf(recItems(r.id), r, 1, Number(r.hasil_standar), '', ''); return '<button class="li" style="width:100%;border:0;font:inherit;text-align:left" data-act="redit" data-id="' + esc(r.id) + '"><div><b>' + esc(r.nama) + '</b><div class="muted">' + esc(vLabel(r.variant_id)) + ' · ' + esc(JN[r.jenis] || r.jenis) + ' · ' + num(r.hasil_standar) + ' unit/batch</div></div><div class="r"><div class="muted">HPP estimasi</div><b>' + rp(c.hpp) + '</b></div></button>'; }).join('') || '<p class="muted">Belum ada resep. Resep menentukan bahan per batch dan hasilnya.</p>');
 }
-function syncRfFromDOM() {
-  const n = document.querySelector('#sheet [data-rf="nama"]'); if (n) S.rf.nama = n.value;
-  const v = document.querySelector('#sheet [data-rf="variant_id"]'); if (v) S.rf.variant_id = v.value;
-  const j = document.querySelector('#sheet [data-rf="jenis"]'); if (j) S.rf.jenis = j.value;
-  const h = document.querySelector('#sheet [data-rf="hasil_standar"]'); if (h) S.rf.hasil_standar = h.value;
-  const t = document.querySelector('#sheet [data-rf="tenaga_kerja"]'); if (t) S.rf.tenaga_kerja = t.value;
-}
+const unitAlt = mm => { // satuan kecil: dari Data Master, atau bawaan untuk kg dan Liter
+  if (!mm) return null; if (mm.satuan_kecil && Number(mm.faktor_kecil) > 1) return {n: mm.satuan_kecil, f: Number(mm.faktor_kecil)};
+  return ({kg: {n: 'gram', f: 1000}, liter: {n: 'ml', f: 1000}, l: {n: 'ml', f: 1000}, ltr: {n: 'ml', f: 1000}, lusin: {n: 'pcs', f: 12}})[String(mm.satuan || '').trim().toLowerCase()] || null;
+};
+const fmtQ = (q, mm) => { const a = unitAlt(mm); return dec(q) + ' ' + (mm ? mm.satuan : '') + (a && q < 1 ? ' (' + dec(q * a.f) + ' ' + a.n + ')' : ''); };
+S.ri = {m: '', q: '', u: 'main'};
 function redit(id) {
   const r = id ? S.data.recipes.find(x => x.id === id) : null;
-  S.rf = r ? {id: r.id, nama: r.nama, variant_id: r.variant_id, jenis: r.jenis || 'batch', hasil_standar: String(r.hasil_standar), tenaga_kerja: String(r.tenaga_kerja || 0), items: recItems(r.id).map(i => ({material_id: i.material_id, qty: A.parseDec(i.qty)}))}
+  S.rf = r ? {id: r.id, nama: r.nama, variant_id: r.variant_id, jenis: r.jenis || 'batch', hasil_standar: String(r.hasil_standar).replace('.', ','), tenaga_kerja: String(r.tenaga_kerja || 0).replace('.', ','), items: recItems(r.id).map(i => ({material_id: i.material_id, qty: Number(i.qty)}))}
     : {id: '', nama: '', variant_id: (S.data.variants[0] || {}).id || '', jenis: 'batch', hasil_standar: '', tenaga_kerja: '0', items: []};
-  rfSheet();
+  S.ri = {m: (S.data.materials[0] || {}).id || '', q: '', u: 'main'}; rfSheet();
 }
 function rfSheet() {
-  const f = S.rf;
-  sheet('<h2>' + (f.id ? 'Ubah resep' : 'Resep baru') + '</h2><label>Nama resep<input class="inp" data-rf="nama" value="' + esc(f.nama) + '"></label><label>Produk hasil (varian)<select class="inp" data-rf="variant_id">' + S.data.variants.map(v => '<option value="' + esc(v.id) + '"' + (v.id === f.variant_id ? ' selected' : '') + '>' + esc(A.vName(v) + ' ' + A.vSub(v)) + '</option>').join('') + '</select></label>' +
+  const f = S.rf, mats = S.data.materials, ri = S.ri; if (!mats.some(x => x.id === ri.m)) ri.m = mats[0] ? mats[0].id : '';
+  const adder = mats.length ? '<div class="card-s" style="padding:12px"><b>Tambah bahan</b><label>Bahan<select class="inp" id="ri_m" data-ri="m">' + mats.map(x => '<option value="' + esc(x.id) + '"' + (x.id === ri.m ? ' selected' : '') + '>' + esc(x.nama) + ' (' + esc(x.satuan) + ')</option>').join('') + '</select></label>' +
+    '<div class="row2"><div style="flex:2"><label id="ri_l">Jumlah per batch</label><input class="inp" id="ri_q" data-ri="q" inputmode="decimal" placeholder="mis. 0,5" value="' + esc(ri.q) + '"></div><div style="flex:1" id="ri_uw"><label>Satuan</label><select class="inp" id="ri_u" data-ri="u"></select></div></div>' +
+    '<div class="chips" id="ri_ch"></div><div class="muted" id="ri_h" style="min-height:18px"></div><button class="btn sec" data-act="riadd">Tambah ke resep</button></div>'
+    : '<div class="card-s"><p class="muted">Belum ada bahan di Data Master. Tambahkan dulu bahan dan kemasan yang dipakai resep.</p><button class="btn pri" data-act="rimat">Buka Data Master, Bahan</button></div>';
+  sheet('<div class="grab"></div><h2>' + (f.id ? 'Ubah resep' : 'Resep baru') + '</h2><label>Nama resep<input class="inp" data-rf="nama" value="' + esc(f.nama) + '"></label><label>Produk hasil (varian)<select class="inp" data-rf="variant_id">' + S.data.variants.map(v => '<option value="' + esc(v.id) + '"' + (v.id === f.variant_id ? ' selected' : '') + '>' + esc(A.vName(v) + ' ' + A.vSub(v)) + '</option>').join('') + '</select></label>' +
     '<label>Jenis<select class="inp" data-rf="jenis"><option value="batch"' + (f.jenis === 'batch' ? ' selected' : '') + '>Batch (produksi sendiri)</option><option value="repack"' + (f.jenis === 'repack' ? ' selected' : '') + '>Repack (kemas ulang)</option></select></label>' +
-    '<div class="row2"><div style="flex:1"><label>Hasil standar per batch (unit)<input class="inp" data-rf="hasil_standar" inputmode="decimal" value="' + esc(f.hasil_standar) + '"></label></div><div style="flex:1"><label>Tenaga kerja per batch (Rp)<input class="inp" data-rf="tenaga_kerja" inputmode="numeric" value="' + esc(f.tenaga_kerja) + '"></label></div></div>' +
-    '<b>Bahan per batch</b>' + (f.items.map((i, n) => { const m = mById(i.material_id); return '<div class="li"><span>' + esc(m ? m.nama : '?') + ' · ' + dec(i.qty) + ' ' + esc(m ? m.satuan : '') + '</span><button class="chip" data-act="ridel" data-i="' + n + '">Hapus</button></div>'; }).join('') || '<div class="muted">Belum ada bahan ditambahkan.</div>') +
-    '<div class="row2" style="margin-top:8px"><div style="flex:2"><select class="inp" id="ri_m">' + S.data.materials.map(m => '<option value="' + esc(m.id) + '">' + esc(m.nama) + ' (' + esc(m.satuan) + ')</option>').join('') + '</select></div><div style="flex:1"><input class="inp" id="ri_q" inputmode="decimal" placeholder="Jumlah (mis. 0.5 atau 0,1)"></div></div><button class="btn sec" data-act="riadd">Tambah bahan</button><div id="rfv"></div>' +
-    '<button class="btn pri" data-act="rsave">Simpan resep</button>' + (f.id ? '<button class="btn dan" data-act="rdel">Hapus resep</button>' : ''));
-  rfv();
+    '<div class="row2"><div style="flex:1"><label>Hasil standar per batch (unit)<input class="inp" data-rf="hasil_standar" inputmode="decimal" value="' + esc(f.hasil_standar) + '"></label></div><div style="flex:1"><label>Tenaga kerja per batch (Rp)<input class="inp" data-rf="tenaga_kerja" inputmode="decimal" value="' + esc(f.tenaga_kerja) + '"></label></div></div>' +
+    '<b>Bahan per batch</b>' + (f.items.map((i, n) => { const mm = mById(i.material_id); return '<div class="li"><div><b>' + esc(mm ? mm.nama : '(bahan dihapus)') + '</b><div class="muted">' + esc(mm ? fmtQ(i.qty, mm) : dec(i.qty)) + (mm && Number(mm.hpp_rata2) > 0 ? ' · ' + rp(i.qty * Number(mm.hpp_rata2)) : '') + '</div></div><button class="chip" data-act="ridel" data-i="' + n + '">Hapus</button></div>'; }).join('') || '<p class="muted">Belum ada bahan.</p>') +
+    adder + '<div id="rfv"></div><button class="btn pri" data-act="rsave">Simpan resep</button>' + (f.id ? '<button class="btn dan" data-act="rdel">Hapus resep</button>' : ''));
+  riRefresh(true); rfv();
+}
+function riRefresh(full) {
+  const mm = mById(S.ri.m), a = unitAlt(mm); if (!$('#ri_m')) return;
+  if (full) {
+    if (S.ri.u === 'sub' && !a) S.ri.u = 'main'; $('#ri_uw').style.display = a ? '' : 'none';
+    $('#ri_u').innerHTML = '<option value="main"' + (S.ri.u === 'main' ? ' selected' : '') + '>' + esc(mm ? mm.satuan : '') + '</option>' + (a ? '<option value="sub"' + (S.ri.u === 'sub' ? ' selected' : '') + '>' + esc(a.n) + '</option>' : '');
+    $('#ri_l').textContent = 'Jumlah per batch (' + (S.ri.u === 'sub' && a ? a.n : (mm ? mm.satuan : '')) + ')';
+    $('#ri_ch').innerHTML = (S.ri.u === 'sub' && a ? [50, 100, 250, 500] : [0.1, 0.25, 0.5, 1]).map(x => '<button class="chip" data-act="riq" data-q="' + x + '">' + dec(x) + '</button>').join('');
+  }
+  const q = N(S.ri.q); let h = ''; if (q > 0 && mm) { const main = S.ri.u === 'sub' && a ? q / a.f : q; h = '= ' + fmtQ(r6(main), mm) + ' per batch'; if (Number(mm.hpp_rata2) > 0) h += ' · biaya ' + rp(main * Number(mm.hpp_rata2)); } $('#ri_h').textContent = h;
 }
 function rfv() {
-  const el = $('#rfv'); if (!el) return; const f = S.rf, q = A.parseDec(f.hasil_standar);
+  const el = $('#rfv'); if (!el) return; const f = S.rf, q = N(f.hasil_standar);
   if (!f.items.length || !(q > 0)) { el.innerHTML = '<p class="muted">Tambahkan bahan dan isi hasil standar untuk melihat estimasi HPP.</p>'; return; }
-  const c = costOf(f.items, {tenaga_kerja: f.tenaga_kerja}, 1, q, '', ''); el.innerHTML = '<div class="li" style="display:block"><b>Estimasi per batch</b>' + kv('Bahan baku', rp(c.bahan)) + kv('Kemasan', rp(c.kem)) + kv('Tenaga kerja', rp(c.tk)) + kv('Overhead', rp(c.oh)) + kv('HPP per unit', rp(c.hpp), 'big') + '</div>';
+  const c = costOf(f.items, {tenaga_kerja: f.tenaga_kerja}, 1, q, '', ''), v = A.vById(f.variant_id), cur = v ? Number(v.hpp_rata2) || 0 : 0;
+  el.innerHTML = '<div class="li" style="display:block"><b>Estimasi per batch</b>' + kv('Bahan baku', rp(c.bahan)) + kv('Kemasan', rp(c.kem)) + kv('Tenaga kerja', rp(c.tk)) + kv('Overhead', rp(c.oh)) + kv('HPP per unit (estimasi)', rp(c.hpp), 'big') + kv('HPP produk saat ini', rp(cur)) +
+    '<p class="muted">HPP dan stok berubah otomatis saat produksi diselesaikan, bukan saat resep disimpan.</p>' + (v && Number(v.stok) >= 0 ? '<button class="btn sec sm" data-act="rhpp">Pakai estimasi sebagai HPP awal produk</button>' : '') + '</div>';
 }
 
 /* ---------- Laporan ---------- */
@@ -250,7 +262,7 @@ async function shGo() {
 /* ---------- Pemeriksaan data: kelengkapan master dan kesesuaian stok dengan riwayat ---------- */
 const priceOf = (vid, cid) => { const x = S.data.prices.find(p => p.variant_id === vid && p.channel_id === cid); return x ? Number(x.harga_jual) : null; };
 function checks() {
-  const d = S.data, out = [], add = (lv, title, items, go, hint) => { if (items.length) out.push({lv: lv, title: title, items: items, go: go, hint: hint}); };
+  const d = S.data, out = [], add = (lv, title, items, go, hint, extra) => { if (items.length) out.push({lv: lv, title: title, items: items, go: go, hint: hint, extra: extra || ''}); };
   const hasV = new Set(d.variants.map(v => v.product_id)), usedMat = new Set(d.recipe_items.map(i => i.material_id)), matIds = new Set(d.materials.map(m => m.id));
   const withPrice = new Set(d.prices.map(p => p.channel_id)), skuCount = {};
   d.variants.forEach(v => { const k = String(v.sku || '').trim().toLowerCase(); if (k) skuCount[k] = (skuCount[k] || 0) + 1; });
@@ -258,7 +270,7 @@ function checks() {
   add('err', 'Varian belum punya harga jual di channel mana pun', d.variants.filter(v => !d.channels.some(c => priceOf(v.id, c.id) != null)).map(vLabel2), 'channel_prices', 'Isi di Data Master, Harga jual.');
   add('info', 'Varian belum punya harga di channel yang sudah dipakai produk lain', d.variants.flatMap(v => d.channels.filter(c => withPrice.has(c.id) && priceOf(v.id, c.id) == null && d.channels.some(x => priceOf(v.id, x.id) != null)).map(c => vLabel2(v) + ' → ' + c.nama)), 'channel_prices', 'Abaikan jika memang tidak dijual di channel itu.');
   add('err', 'SKU ganda (merusak impor Shopee dan pencarian)', d.variants.filter(v => skuCount[String(v.sku || '').trim().toLowerCase()] > 1).map(vLabel2), 'product_variants', 'Setiap varian harus punya SKU unik.');
-  add('info', 'Varian belum punya SKU (dibutuhkan untuk impor Shopee)', d.variants.filter(v => !String(v.sku || '').trim()).map(vLabel2), 'product_variants', '');
+  add('info', 'Varian belum punya SKU (dibutuhkan untuk impor Shopee)', d.variants.filter(v => !String(v.sku || '').trim()).map(vLabel2), 'product_variants', '', '<button class="chip" data-act="skuauto">Isi SKU otomatis</button> ');
   add('err', 'Resep memakai bahan yang sudah dihapus', d.recipes.filter(r => d.recipe_items.some(i => i.recipe_id === r.id && !matIds.has(i.material_id))).map(r => r.nama), 'resep', 'Ganti bahan di resep.');
   add('err', 'Bahan dipakai resep tetapi HPP masih 0 (HPP produksi tidak akurat)', d.materials.filter(m => usedMat.has(m.id) && !(Number(m.hpp_rata2) > 0)).map(m => m.nama), 'stok', 'Isi lewat Pembelian bahan atau Penyesuaian stok (HPP awal).');
   add('info', 'Varian belum punya resep (belum bisa diproduksi dari aplikasi)', d.variants.filter(v => !d.recipes.some(r => r.variant_id === v.id)).map(vLabel2), 'resep', 'Abaikan untuk produk yang tidak diproduksi sendiri.');
@@ -272,7 +284,7 @@ function vCek() {
   $('#main').innerHTML = '<button class="chip" data-act="tab" data-t="menu">← Menu</button><div class="li" style="display:block;margin-top:8px"><b>Pemeriksaan data</b><p class="muted">Mengecek kelengkapan data master di perangkat ini (sesuai data terakhir yang dimuat). ' + (c.length ? err + ' hal perlu diperbaiki, ' + (c.length - err) + ' catatan.' : 'Semua data lengkap.') + '</p></div>' +
     c.map(x => '<div class="li" style="display:block"><div class="kv"><b>' + esc(x.title) + '</b><span class="tag ' + (x.lv === 'err' ? 'red' : '') + '">' + (x.lv === 'err' ? 'Perbaiki' : 'Info') + ' · ' + x.items.length + '</span></div>' +
       '<div class="muted">' + x.items.slice(0, 8).map(esc).join(', ') + (x.items.length > 8 ? ' dan ' + (x.items.length - 8) + ' lainnya' : '') + '</div>' + (x.hint ? '<div class="muted">' + esc(x.hint) + '</div>' : '') +
-      '<button class="chip" style="margin-top:6px" data-act="cekgo" data-t="' + x.go + '">Buka</button></div>').join('') +
+      '<div style="margin-top:6px">' + x.extra + '<button class="chip" data-act="cekgo" data-t="' + x.go + '">Buka</button></div></div>').join('') +
     '<div class="li" style="display:block"><b>Kesesuaian stok</b><p class="muted">Membandingkan stok setiap item dengan jumlah riwayat mutasinya di server. Selisih berarti ada perubahan stok di luar aplikasi (misalnya diedit langsung di Google Sheets).</p><button class="btn sec" data-act="caudit" style="margin-top:0">Periksa stok sekarang</button><div id="caud"></div></div>';
 }
 async function stockAudit() {
@@ -284,80 +296,51 @@ async function stockAudit() {
   } catch (e) { if ($('#caud')) $('#caud').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
 }
 
+/* ---------- Arsip data ---------- */
+function vArsip() {
+  $('#main').innerHTML = '<button class="chip" data-act="tab" data-t="menu">← Menu</button><div id="abody" style="margin-top:8px">' + skel(3) + '</div>';
+  api('archive.status', {}).then(r => {
+    if (!$('#abody')) return; const tot = r.kandidat.reduce((a, x) => a + x.baris, 0), L = {sales: 'Penjualan', purchases: 'Pembelian', production_orders: 'Produksi', expenses: 'Biaya', audit_log: 'Log perubahan', stock_movements: 'Mutasi stok'};
+    $('#abody').innerHTML = '<div class="card-s"><h3>Ukuran database</h3><div class="kv"><span>Perkiraan sel terpakai</span><b>' + dec(r.sel) + ' dari ' + dec(r.batas) + '</b></div><div class="bar"><i style="width:' + Math.min(100, r.persen) + '%"></i></div><p class="muted">' + r.persen + '% dari batas Google Sheets. Makin kecil, makin cepat aplikasi.</p>' +
+      r.tabel.map(t => '<div class="kv"><span>' + esc(L[t.tabel] || t.tabel) + '</span><span>' + dec(t.baris) + ' baris</span></div>').join('') + '</div>' +
+      '<div class="card-s"><h3>Pengarsipan otomatis</h3><p class="muted">Setiap tanggal 1 (jika pemicu sudah dipasang lewat <b>installTriggers</b>), data yang lebih lama dari batas di bawah dipindahkan ke spreadsheet arsip per tahun. Stok tetap cocok karena riwayat lama diringkas menjadi saldo.</p>' +
+      '<label>Simpan di database utama selama<select class="inp" id="ar_b">' + [6, 12, 13, 18, 24].map(b => '<option value="' + b + '"' + (b === r.bulan ? ' selected' : '') + '>' + b + ' bulan</option>').join('') + '</select></label><button class="btn sec sm" data-act="arsipsave">Simpan batas</button>' +
+      '<div style="margin-top:10px">' + (tot ? '<b>Dapat diarsipkan sekarang (sebelum ' + esc(r.cutoff) + '):</b>' + r.kandidat.map(x => '<div class="kv"><span>' + esc(L[x.tabel] || x.tabel) + '</span><span>' + dec(x.baris) + ' baris</span></div>').join('') : '<p class="muted">Belum ada data yang melewati batas. Tidak ada yang perlu diarsipkan.</p>') + '</div>' +
+      '<button class="btn pri" data-act="arsiprun"' + (tot ? '' : ' disabled') + '>Arsipkan sekarang</button><p class="muted">Laporan untuk periode yang sudah diarsipkan tidak lagi tampil di aplikasi; datanya tetap ada di spreadsheet arsip di Google Drive Anda.</p></div>';
+  }).catch(e => { if ($('#abody')) $('#abody').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; });
+}
 /* ---------- Aksi ---------- */
 Object.assign(ACT, {
+  arsipsave: () => busy('Menyimpan…', async () => { try { await api('setting.setMany', {values: {arsip_bulan: Number($('#ar_b').value)}}); await A.loadData(); toast('Batas arsip disimpan'); vArsip(); } catch (e) { toast(e.message); } }),
+  arsiprun: () => { if (!confirm('Pindahkan data lama ke spreadsheet arsip sekarang? Data tetap tersimpan di arsip.')) return; return busy('Mengarsipkan data lama… (bisa beberapa menit)', async () => { try { const r = await api('archive.run', {}); const n = Object.keys(r.tabel).reduce((a, k) => a + r.tabel[k], 0); toast(n + ' baris dipindahkan' + (r.sebagian ? ' (sebagian; jalankan lagi untuk melanjutkan)' : '')); vArsip(); } catch (e) { toast(e.message); } }); },
+  skuauto: () => busy('Mengisi SKU…', async () => { try { const r = await api('sku.auto', {}); await A.loadData(); A.render(); toast(r.diisi + ' SKU diisi otomatis'); } catch (e) { toast(e.message); } }),
   caudit: stockAudit, cekgo: el => { const t = el.dataset.t; if (t === 'resep' || t === 'stok') S.tab = t; else { S.mt = t; S.tab = 'master'; } A.render(); },
   creco: el => busy('Menyelaraskan riwayat…', async () => { try { await api('stock.reconcile', {tipe: el.dataset.t, id: el.dataset.id}); toast('Riwayat disesuaikan'); stockAudit(); } catch (e) { toast(e.message); } }),
   dp: el => { S.dp = el.dataset.p; vDash(); },
   pnew: prodNew, pjenis: el => { S.pform.jenis = el.dataset.j; prodNew(); },
-  psave: () => busy('Menyimpan rencana…', async () => { try { await api('production.create', {recipe_id: S.pform.recipe, jumlah_batch: Number(S.pform.batch), jenis: S.pform.jenis, catatan: S.pform.catatan}); closeSheet(); toast('Rencana produksi tersimpan'); vProduksi(); } catch (e) { toast(e.message); } }),
+  psave: () => busy('Menyimpan rencana…', async () => { try { await api('production.create', {recipe_id: S.pform.recipe, jumlah_batch: N(S.pform.batch), jenis: S.pform.jenis, catatan: S.pform.catatan}); closeSheet(); toast('Rencana produksi tersimpan'); vProduksi(); } catch (e) { toast(e.message); } }),
   pdetail: el => prodDetail(el.dataset.id), pdone: el => prodDone(el.dataset.id),
-  psave_direct: () => busy('Menyimpan & memproses stok…', async () => {
-    try {
-      const f = S.pform, rec = S.data.recipes.find(r => r.id === f.recipe), b = A.parseDec(f.batch);
-      if (!rec || !(b > 0)) return toast('Pilih resep dan jumlah batch');
-      const stdQty = Number(rec.hasil_standar) * b;
-      const order = await api('production.create', {recipe_id: rec.id, jumlah_batch: b, jenis: f.jenis, catatan: f.catatan});
-      const r = await api('production.complete', {id: order.id, qty_hasil: stdQty, tenaga_kerja: '', overhead: ''});
-      r.materials.forEach(u => { const m = mById(u.id); if (m) m.stok = u.stok; });
-      const v = A.vById(r.variant.id);
-      if (v) { v.stok = r.variant.stok; v.hpp_rata2 = r.variant.hpp_rata2; }
-      LS.set('data', S.data); closeSheet();
-      toast('Produksi selesai! Stok bertambah ' + dec(stdQty) + ' pcs, HPP ' + rp(r.costs.hpp_per_unit));
-      vProduksi();
-    } catch (e) { toast(e.message); }
-  }),
   pcancel: el => { if (!confirm('Batalkan rencana produksi ini?')) return; return busy('Membatalkan…', async () => { try { await api('production.cancel', {id: el.dataset.id}); closeSheet(); vProduksi(); } catch (e) { toast(e.message); } }); },
   pdosave: () => busy('Menyelesaikan produksi…', async () => {
     try {
-      const r = await api('production.complete', {id: S.pd.id, qty_hasil: A.parseDec(S.pd.qty), tenaga_kerja: S.pd.tk, overhead: S.pd.oh});
+      const r = await api('production.complete', {id: S.pd.id, qty_hasil: N(S.pd.qty), tenaga_kerja: S.pd.tk === '' ? '' : N(S.pd.tk), overhead: S.pd.oh === '' ? '' : N(S.pd.oh)});
       r.materials.forEach(u => { const m = mById(u.id); if (m) m.stok = u.stok; }); const v = A.vById(r.variant.id); if (v) { v.stok = r.variant.stok; v.hpp_rata2 = r.variant.hpp_rata2; }
       LS.set('data', S.data); closeSheet(); toast('Produksi selesai. HPP per unit ' + rp(r.costs.hpp_per_unit)); vProduksi();
     } catch (e) { toast(e.message); }
   }),
   redit: el => redit(el.dataset.id),
   riadd: () => {
-    syncRfFromDOM();
-    const mEl = $('#ri_m'), qEl = $('#ri_q');
-    if (!mEl || !qEl) return;
-    const id = mEl.value, q = A.parseDec(qEl.value);
-    if (!id || !(q > 0)) return toast('Pilih bahan dan isi jumlah (contoh: 0.5 atau 0,1)');
-    const m = mById(id);
-    const existing = S.rf.items.find(i => i.material_id === id);
-    if (existing) {
-      existing.qty = Math.round((Number(existing.qty) + q) * 10000) / 10000;
-    } else {
-      S.rf.items.push({material_id: id, qty: q});
-    }
-    rfSheet();
-    toast('Bahan ditambahkan: ' + (m ? m.nama : '') + ' (' + dec(q) + ' ' + (m ? m.satuan : '') + ')');
+    const mm = mById(S.ri.m), a = unitAlt(mm); let q = N(S.ri.q);
+    if (!mm) return toast('Pilih bahan terlebih dahulu'); if (!(q > 0)) return toast('Isi jumlah lebih dari 0. Boleh desimal, mis. 0,5');
+    if (S.ri.u === 'sub' && a) q = q / a.f; q = r6(q); const ex = S.rf.items.find(i => i.material_id === mm.id);
+    if (ex) ex.qty = r6(ex.qty + q); else S.rf.items.push({material_id: mm.id, qty: q}); S.ri.q = ''; S.ri.u = 'main'; rfSheet(); toast(mm.nama + ' ditambahkan');
   },
-  ridel: el => {
-    syncRfFromDOM();
-    S.rf.items.splice(el.dataset.i, 1);
-    rfSheet();
-  },
-  rsave: () => {
-    syncRfFromDOM();
-    return busy('Menyimpan resep…', async () => {
-      try {
-        const f = S.rf;
-        await api('recipe.save', {
-          id: f.id || undefined,
-          variant_id: f.variant_id,
-          nama: f.nama,
-          hasil_standar: A.parseDec(f.hasil_standar),
-          jenis: f.jenis,
-          tenaga_kerja: A.parseDec(f.tenaga_kerja) || 0,
-          items: f.items
-        });
-        await A.loadData();
-        closeSheet();
-        A.render();
-        toast('Resep tersimpan');
-      } catch (e) { toast(e.message); }
-    });
-  },
+  riq: el => { S.ri.q = String(el.dataset.q).replace('.', ','); const i = $('#ri_q'); if (i) i.value = S.ri.q; riRefresh(false); },
+  rimat: () => { closeSheet(); S.mt = 'materials'; S.tab = 'master'; A.render(); },
+  rhpp: () => { const f = S.rf, v = A.vById(f.variant_id), c = costOf(f.items, {tenaga_kerja: f.tenaga_kerja}, 1, N(f.hasil_standar), '', ''); if (!v || !confirm('Set HPP produk menjadi ' + rp(c.hpp) + ' (stok tidak berubah)?')) return;
+    return busy('Menyimpan HPP…', async () => { try { const r = await api('stock.adjust', {tipe: 'varian', id: v.id, stok_baru: Number(v.stok) || 0, hpp: Math.round(c.hpp * 100) / 100, alasan: 'HPP awal dari estimasi resep'}); v.hpp_rata2 = r.hpp_rata2; LS.set('data', S.data); rfv(); toast('HPP produk diperbarui'); } catch (e) { toast(e.message); } }); },
+  ridel: el => { S.rf.items.splice(el.dataset.i, 1); rfSheet(); },
+  rsave: () => busy('Menyimpan resep…', async () => { try { const f = S.rf; await api('recipe.save', {id: f.id || undefined, variant_id: f.variant_id, nama: f.nama, hasil_standar: N(f.hasil_standar), jenis: f.jenis, tenaga_kerja: N(f.tenaga_kerja) || 0, items: f.items}); await A.loadData(); closeSheet(); A.render(); toast('Resep tersimpan'); } catch (e) { toast(e.message); } }),
   rdel: () => { if (!confirm('Hapus resep ini?')) return; return busy('Menghapus…', async () => { try { await api('master.remove', {table: 'recipes', id: S.rf.id}); await A.loadData(); closeSheet(); A.render(); } catch (e) { toast(e.message); } }); },
   rt: el => { S.rt = el.dataset.t; vLaporan(); }, rrun: runReport,
   rcsv: () => S.rres && download('laporan-' + S.rres.type + '-' + S.rres.to + '.csv', csvText(S.rres)),
@@ -368,17 +351,16 @@ document.addEventListener('input', e => {
   const t = e.target, d = t.dataset || {};
   if (d.pf) { S.pform[d.pf] = t.value; if (d.pf === 'recipe' || d.pf === 'batch') pv(); }
   else if (d.pd) { S.pd[d.pd] = t.value; pdv(); }
-  else if (d.rf) { S.rf[d.rf] = t.value; if (d.rf === 'hasil_standar' || d.rf === 'tenaga_kerja') rfv(); }
+  else if (d.rf) { S.rf[d.rf] = t.value; if (d.rf === 'hasil_standar' || d.rf === 'tenaga_kerja' || d.rf === 'variant_id') rfv(); }
+  else if (d.ri) { S.ri[d.ri] = t.value; if (d.ri === 'm') S.ri.u = 'main'; riRefresh(d.ri !== 'q'); }
   else if (d.rg) S[d.rg] = t.value;
 });
 document.addEventListener('change', e => {
-  const t = e.target, d = t.dataset || {};
+  const t = e.target;
   if (t.id === 'shfile' && t.files && t.files[0]) { const f = t.files[0]; (f.text ? f.text() : new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsText(f); })).then(shLoad); }
-  else if (d.sm) { S.sh.map[d.sm] = Number(t.value); vShopee(); }
-  else if (d.rf) { S.rf[d.rf] = t.value; if (d.rf === 'hasil_standar' || d.rf === 'tenaga_kerja') rfv(); }
-  else if (d.pf) { S.pform[d.pf] = t.value; if (d.pf === 'recipe' || d.pf === 'batch') pv(); }
+  else if (t.dataset && t.dataset.sm) { S.sh.map[t.dataset.sm] = Number(t.value); vShopee(); }
 });
-Object.assign(A.views, {dash: vDash, produksi: vProduksi, resep: vResep, laporan: vLaporan, shopee: vShopee, cek: vCek});
+Object.assign(A.views, {dash: vDash, produksi: vProduksi, resep: vResep, laporan: vLaporan, shopee: vShopee, cek: vCek, arsip: vArsip});
 Object.assign(A, {shopeeText: shLoad, parseCSV: parseCSV, parseNum: parseNum, normDate: normDate});
 A.start();
 })();
