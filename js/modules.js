@@ -6,30 +6,42 @@ const set = k => S.data.settings[k];
 const mById = id => S.data.materials.find(m => m.id === id);
 const pct = n => (Math.round(Number(n) * 10) / 10).toLocaleString('id-ID') + '%';
 const dec = n => (Math.round(Number(n) * 1000) / 1000).toLocaleString('id-ID', {maximumFractionDigits: 3});
-const N = A.dnum, r6 = A.r6;
+const N = A.dnum, r6 = A.r6, wrapChips = A.wrapChips, emptyState = A.emptyState, idDate = A.idDate, idRange = A.idRange;
+const ymd = d => d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
 const p2 = n => ('0' + n).slice(-2);
 const kv = (a, b, cl) => '<div class="kv ' + (cl || '') + '"><span>' + a + '</span><span>' + b + '</span></div>';
 const vLabel = id => { const v = A.vById(id); return v ? A.vName(v) + ' ' + A.vSub(v) : '(produk dihapus)'; };
 S.dp = 'hari'; S.pform = {jenis: 'batch', recipe: '', batch: '1', catatan: ''}; S.rt = 'labarugi'; S.rto = A.today(); S.rfrom = S.rto.slice(0, 8) + '01';
 
+/* ---------- Akurasi laba: produk terjual yang HPP-nya masih 0 ---------- */
+const hc = {};
+function hppCheck(from, to) {
+  const k = from + '|' + to; if (hc[k] && Date.now() - hc[k].t < 60000) return Promise.resolve(hc[k].v);
+  return api('report.get', {type: 'penjualan', from: from, to: to}, {silent: true}).then(r => { const v = hppOf(r.rows); hc[k] = {t: Date.now(), v: v}; return v; });
+}
+const hppOf = rows => { const bad = rows.filter(x => !(Number(x[4]) > 0)); return {n: bad.length, names: bad.map(x => (x[0] + ' ' + x[1]).trim())}; };
+const warnBanner = v => '<div class="warn-b" role="alert"><div><b>Laba belum akurat:</b> ' + v.n + ' produk belum punya resep/HPP<div class="muted">' + esc(v.names.slice(0, 3).join(', ')) + (v.names.length > 3 ? ' dan ' + (v.names.length - 3) + ' lainnya' : '') + '</div></div><button class="btn pri sm" data-act="go_resep">Lengkapi di Resep</button></div>';
+const qMark = '<span class="q-m" title="HPP belum diisi, margin belum bisa dihitung" aria-label="margin belum bisa dihitung">?</span>';
+
 /* ---------- Beranda (dashboard) ---------- */
 function vDash() {
-  $('#main').innerHTML = '<div class="chips">' + [['hari', 'Hari ini'], ['minggu', '7 hari'], ['bulan', 'Bulan ini']].map(p => '<button class="chip ' + (S.dp === p[0] ? 'on' : '') + '" data-act="dp" data-p="' + p[0] + '">' + p[1] + '</button>').join('') + '<button class="chip" data-act="dp" data-p="' + S.dp + '" aria-label="Muat ulang">↻</button></div><div id="dbody"></div>';
+  $('#main').innerHTML = wrapChips([['hari', 'Hari ini'], ['minggu', '7 hari'], ['bulan', 'Bulan ini']].map(p => '<button class="chip ' + (S.dp === p[0] ? 'on' : '') + '" data-act="dp" data-p="' + p[0] + '">' + p[1] + '</button>').join('') + '<button class="chip" data-act="dp" data-p="' + S.dp + '" aria-label="Muat ulang">↻</button>') + '<div id="dbody"></div>';
   const key = 'dash_' + S.dp, cached = LS.get(key, null), want = S.dp;
   if (cached) drawDash(cached); else $('#dbody').innerHTML = skel(4);
   api('dashboard.get', {period: want}).then(d => { LS.set(key, d); if (S.tab === 'dash' && S.dp === want && $('#dbody')) drawDash(d); })
     .catch(e => { if (!cached && $('#dbody')) $('#dbody').innerHTML = '<p class="muted">Tidak bisa memuat dashboard: ' + esc(e.message) + '</p>'; });
 }
-function delta(c, p) { if (!p) return '<span>baru</span>'; const x = (c - p) / Math.abs(p) * 100; return '<span style="color:' + (x >= 0 ? 'var(--ok)' : 'var(--err)') + ';font-weight:800">' + (x >= 0 ? '▲ ' : '▼ ') + pct(Math.abs(x)) + '</span>'; }
+function delta(c, p, lab) { if (!p) return '<span>—</span> ' + lab + ' (belum ada data)'; const x = (c - p) / Math.abs(p) * 100; return '<span style="color:' + (x >= 0 ? 'var(--ok)' : 'var(--err)') + ';font-weight:800">' + (x >= 0 ? '▲ ' : '▼ ') + pct(Math.abs(x)) + '</span> ' + lab; }
 const kpi = (l, v, sub) => '<div class="kpi"><div class="muted">' + l + '</div><b>' + v + '</b><div class="muted">' + sub + '</div></div>';
 function barChart(ser) {
   const W = 320, H = 130, pad = 18, n = ser.length, max = Math.max(1, ...ser.map(s => s.omzet)), bw = (W - 8) / n; let g = '';
   ser.forEach((s, i) => {
     const h = Math.max(1, Math.round(s.omzet / max * (H - pad - 14))), lh = Math.max(0, Math.round(Math.max(s.laba, 0) / max * (H - pad - 14))), x = 4 + i * bw + bw * .15, w = bw * .7;
-    g += '<rect x="' + x + '" y="' + (H - pad - h) + '" width="' + w + '" height="' + h + '" rx="3" fill="#F28C1B"><title>' + s.d + ': ' + rp(s.omzet) + ', laba kotor ' + rp(s.laba) + '</title></rect><rect x="' + x + '" y="' + (H - pad - lh) + '" width="' + w + '" height="' + lh + '" rx="3" fill="#4A1414"/>';
-    if (n <= 8 || i % 5 === 0) g += '<text x="' + (x + w / 2) + '" y="' + (H - 4) + '" font-size="9" text-anchor="middle" fill="#7a5f5f">' + s.d.slice(8) + '</text>';
+    g += '<rect data-b="' + i + '" x="' + x + '" y="' + (H - pad - h) + '" width="' + w + '" height="' + h + '" rx="3" fill="#F28C1B"/><rect data-b="' + i + '" x="' + x + '" y="' + (H - pad - lh) + '" width="' + w + '" height="' + lh + '" rx="3" fill="#4A1414"/>';
+    if (n <= 8 || i % 5 === 0) g += '<text x="' + (x + w / 2) + '" y="' + (H - 4) + '" font-size="10" text-anchor="middle" fill="#6B5252">' + s.d.slice(8) + '</text>';
+    g += '<rect data-act="bar" data-i="' + i + '" x="' + (4 + i * bw) + '" y="0" width="' + bw + '" height="' + H + '" fill="transparent" style="cursor:pointer"/>'; // area ketuk selebar kolom
   });
-  return '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Omzet dan laba kotor per hari">' + g + '</svg>';
+  return '<svg class="bchart" viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Omzet dan laba kotor per hari. Ketuk batang untuk melihat nilai.">' + g + '</svg>';
 }
 const COL = ['#4A1414', '#F28C1B', '#FFD21F', '#2E7D32', '#8a6d6d'];
 function donut(parts, total) {
@@ -37,15 +49,18 @@ function donut(parts, total) {
   const segs = parts.map((p, i) => { const len = total ? p.omzet / total * Cc : 0, s = '<circle r="' + R + '" cx="60" cy="60" fill="none" stroke="' + COL[i % 5] + '" stroke-width="22" stroke-dasharray="' + len + ' ' + (Cc - len) + '" stroke-dashoffset="' + (-off) + '" transform="rotate(-90 60 60)"/>'; off += len; return s; }).join('');
   return '<svg viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="Komposisi penjualan per channel"><circle r="' + R + '" cx="60" cy="60" fill="none" stroke="#F1E3CC" stroke-width="22"/>' + segs + '</svg>';
 }
+const CMP = {hari: 'vs kemarin', minggu: 'vs 7 hari sebelumnya', bulan: 'vs periode sebelumnya'};
 function drawDash(d) {
-  const c = d.cur, p = d.prev, tot = d.channels.reduce((a, x) => a + x.omzet, 0), maxQ = Math.max(1, ...d.top.map(t => t.qty));
-  $('#dbody').innerHTML = '<p class="muted">' + d.from + (d.from !== d.to ? ' s/d ' + d.to : '') + ' · omzet tanpa PPN</p><div class="kgrid">' +
-    kpi('Omzet', rp(c.omzet), delta(c.omzet, p.omzet) + ' vs sebelumnya') + kpi('Transaksi', num(c.trx), 'Rata-rata ' + rp(c.trx ? c.omzet / c.trx : 0)) +
-    kpi('Laba kotor', rp(c.laba), (c.omzet ? pct(c.laba / c.omzet * 100) : '0%') + ' margin') + kpi('Laba bersih', rp(d.laba_bersih), 'setelah fee dan biaya') + '</div>' +
-    '<div class="li" style="display:block"><b>Omzet dan laba kotor</b><div class="muted">' + (d.period === 'bulan' ? 'Bulan berjalan' : '7 hari terakhir') + ' · <span style="color:#F28C1B">■</span> omzet <span style="color:#4A1414">■</span> laba kotor</div>' + barChart(d.series) + '</div>' +
-    '<div class="li" style="display:block"><b>Per channel</b><div style="display:flex;gap:12px;align-items:center">' + donut(d.channels, tot) + '<div style="flex:1">' + (d.channels.map((x, i) => '<div class="kv"><span><span style="color:' + COL[i % 5] + '">■</span> ' + esc(x.nama) + '</span><span>' + (tot ? pct(x.omzet / tot * 100) : '0%') + '</span></div>').join('') || '<span class="muted">Belum ada penjualan</span>') + '</div></div></div>' +
+  const c = d.cur, p = d.prev, tot = d.channels.reduce((a, x) => a + x.omzet, 0), maxQ = Math.max(1, ...d.top.map(t => t.qty)), lab = CMP[d.period] || 'vs sebelumnya';
+  const days = Math.round((new Date(d.to + 'T12:00:00') - new Date(d.from + 'T12:00:00')) / 86400000) + 1, pto = A.addDays(d.from, -1), pfrom = A.addDays(pto, -(days - 1)); S.dser = d.series;
+  $('#dbody').innerHTML = '<div id="hppw"></div><p class="muted rcap">' + esc(idRange(d.from, d.to)) + ' · omzet tanpa PPN · pembanding: ' + esc(idRange(pfrom, pto)) + '</p><div class="kgrid">' +
+    kpi('Omzet', rp(c.omzet), delta(c.omzet, p.omzet, lab)) + kpi('Transaksi', num(c.trx), 'Rata-rata ' + rp(c.trx ? c.omzet / c.trx : 0)) +
+    kpi('Laba kotor', rp(c.laba), '<span id="mgn">' + (c.omzet ? pct(c.laba / c.omzet * 100) : '0%') + ' margin</span>') + kpi('Laba bersih', rp(d.laba_bersih), 'setelah fee dan biaya') + '</div>' +
+    '<div class="li" style="display:block"><b>Omzet dan laba kotor</b><div class="muted">' + (d.period === 'bulan' ? 'Bulan berjalan' : '7 hari terakhir') + '<span class="lgd" style="background:#F28C1B"></span>Omzet<span class="lgd" style="background:#4A1414"></span>Laba kotor</div><div class="btip" id="bt" aria-live="polite">Ketuk batang untuk melihat nilai harian</div>' + barChart(d.series) + '</div>' +
+    '<div class="li" style="display:block"><b>Per channel</b><div style="display:flex;gap:12px;align-items:center">' + donut(d.channels, tot) + '<div style="flex:1">' + (d.channels.map((x, i) => '<div class="kv"><span><span class="lgd" style="background:' + COL[i % 5] + ';margin-left:0"></span>' + esc(x.nama) + '</span><span>' + (tot ? pct(x.omzet / tot * 100) : '0%') + '</span></div>').join('') || '<span class="muted">Belum ada penjualan</span>') + '</div></div></div>' +
     '<div class="li" style="display:block"><b>Produk terlaris</b>' + (d.top.map(t => '<div style="margin-top:6px"><div class="kv"><span>' + esc(t.nama) + '</span><span>' + num(t.qty) + ' pcs</span></div><div class="bar"><i style="width:' + Math.round(t.qty / maxQ * 100) + '%"></i></div></div>').join('') || '<div class="muted">Belum ada data</div>') + '</div>' +
     '<div class="li" style="display:block"><b>Perlu perhatian</b>' + (d.low.map(l => '<div class="kv"><span>' + esc(l.nama) + '</span><span><span class="tag">Menipis</span> ' + dec(l.stok) + ' ' + esc(l.satuan) + '</span></div>').join('') || '<div class="muted">Semua stok bahan aman</div>') + (d.biaya ? kv('Biaya operasional', rp(d.biaya)) : '') + '</div>';
+  if (c.trx) hppCheck(d.from, d.to).then(v => { if (!v.n || !$('#hppw')) return; $('#hppw').innerHTML = warnBanner(v); const mg = $('#mgn'); if (mg && c.omzet && c.laba / c.omzet >= .995) mg.innerHTML = qMark + ' margin belum bisa dihitung'; }).catch(() => {});
 }
 
 /* ---------- Biaya produksi (dipakai pratinjau, sama dengan hitungan server) ---------- */
@@ -78,7 +93,7 @@ function drawProd() {
     const st = o.status, tag = st === 'selesai' ? '<span class="tag grn">Selesai</span>' : st === 'rencana' ? '<span class="tag">Rencana</span>' : '<span class="tag red">Batal</span>';
     return '<button class="li" style="width:100%;border:0;font:inherit;text-align:left" data-act="pdetail" data-id="' + esc(o.id) + '"><div><b>' + esc(vLabel(o.variant_id)) + '</b><div class="muted">' + esc(JN[o.jenis] || o.jenis) + ' · ' + num(o.jumlah_batch) + ' batch · ' + esc(String(o.tanggal).slice(0, 10)) + '</div></div><div class="r">' + tag +
       (st === 'selesai' ? '<div class="muted">' + num(o.qty_hasil) + ' pcs · HPP ' + rp(o.hpp_per_unit) + '</div>' : '') + '</div></button>';
-  }).join('') || '<p class="muted">Belum ada produksi. Buat resep dulu, lalu ketuk "+ Produksi baru".</p>';
+  }).join('') || (S.data.recipes.length ? emptyState('produksi', 'Belum ada produksi', 'Catat produksi pertama untuk menambah stok produk jadi dan menghitung HPP otomatis.', '<button class="btn pri" data-act="pnew">+ Produksi baru</button>') : emptyState('produksi', 'Belum ada produksi', 'Buat resep dulu agar kebutuhan bahan dan HPP bisa dihitung otomatis.', '<button class="btn pri" data-act="redit" data-id="">Buat resep pertama</button>'));
 }
 function prodNew() {
   const f = S.pform, recs = S.data.recipes.filter(r => (f.jenis === 'repack') === (r.jenis === 'repack'));
@@ -122,7 +137,7 @@ function pdv() {
 /* ---------- Resep ---------- */
 function vResep() {
   $('#main').innerHTML = '<button class="chip" data-act="tab" data-t="menu">← Menu</button> <button class="chip" data-act="tab" data-t="produksi">Produksi</button><button class="btn pri" data-act="redit" data-id="" style="margin-top:8px">+ Resep baru</button><div style="height:8px"></div>' +
-    (S.data.recipes.map(r => { const c = costOf(recItems(r.id), r, 1, Number(r.hasil_standar), '', ''); return '<button class="li" style="width:100%;border:0;font:inherit;text-align:left" data-act="redit" data-id="' + esc(r.id) + '"><div><b>' + esc(r.nama) + '</b><div class="muted">' + esc(vLabel(r.variant_id)) + ' · ' + esc(JN[r.jenis] || r.jenis) + ' · ' + num(r.hasil_standar) + ' unit/batch</div></div><div class="r"><div class="muted">HPP estimasi</div><b>' + rp(c.hpp) + '</b></div></button>'; }).join('') || '<p class="muted">Belum ada resep. Resep menentukan bahan per batch dan hasilnya.</p>');
+    (S.data.recipes.map(r => { const c = costOf(recItems(r.id), r, 1, Number(r.hasil_standar), '', ''); return '<button class="li" style="width:100%;border:0;font:inherit;text-align:left" data-act="redit" data-id="' + esc(r.id) + '"><div><b>' + esc(r.nama) + '</b><div class="muted">' + esc(vLabel(r.variant_id)) + ' · ' + esc(JN[r.jenis] || r.jenis) + ' · ' + num(r.hasil_standar) + ' unit/batch</div></div><div class="r"><div class="muted">HPP estimasi</div><b>' + rp(c.hpp) + '</b></div></button>'; }).join('') || emptyState('produksi', 'Belum ada resep', 'Resep menentukan bahan per batch dan hasilnya, sehingga HPP produk dihitung otomatis.', '<button class="btn pri" data-act="redit" data-id="">Buat resep pertama</button>'));
 }
 const unitAlt = mm => { // satuan kecil: dari Data Master, atau bawaan untuk kg dan Liter
   if (!mm) return null; if (mm.satuan_kecil && Number(mm.faktor_kecil) > 1) return {n: mm.satuan_kecil, f: Number(mm.faktor_kecil)};
@@ -169,22 +184,35 @@ function rfv() {
 
 /* ---------- Laporan ---------- */
 const RTYPES = [['labarugi', 'Laba rugi'], ['penjualan', 'Penjualan'], ['channel', 'Channel'], ['hpp', 'HPP & margin'], ['stok', 'Stok & nilai'], ['produksi', 'Produksi'], ['pembelian', 'Pembelian'], ['pengeluaran', 'Biaya']];
-function vLaporan() {
-  const noDate = ['stok', 'hpp'].indexOf(S.rt) >= 0;
-  $('#main').innerHTML = '<button class="chip" data-act="tab" data-t="menu">← Menu</button><div class="chips" style="margin-top:8px">' + RTYPES.map(t => '<button class="chip ' + (S.rt === t[0] ? 'on' : '') + '" data-act="rt" data-t="' + t[0] + '">' + t[1] + '</button>').join('') + '</div>' +
-    (noDate ? '' : '<div class="row2"><div style="flex:1"><label>Dari<input type="date" class="inp" data-rg="rfrom" value="' + S.rfrom + '"></label></div><div style="flex:1"><label>Sampai<input type="date" class="inp" data-rg="rto" value="' + S.rto + '"></label></div></div><button class="btn pri" data-act="rrun" style="margin-top:0">Tampilkan</button>') + '<div id="rres" style="margin-top:10px"></div>';
-  runReport();
+const PRE = [['today', 'Hari ini'], ['yday', 'Kemarin'], ['7d', '7 hari'], ['month', 'Bulan ini'], ['lmonth', 'Bulan lalu'], ['custom', 'Custom']];
+S.rpre = 'month';
+function setPreset() {
+  const t = A.today();
+  if (S.rpre === 'today') { S.rfrom = S.rto = t; } else if (S.rpre === 'yday') { S.rfrom = S.rto = A.addDays(t, -1); } else if (S.rpre === '7d') { S.rfrom = A.addDays(t, -6); S.rto = t; }
+  else if (S.rpre === 'month') { S.rfrom = t.slice(0, 8) + '01'; S.rto = t; } else if (S.rpre === 'lmonth') { S.rfrom = ymd(new Date(Number(t.slice(0, 4)), Number(t.slice(5, 7)) - 2, 1)); S.rto = ymd(new Date(Number(t.slice(0, 4)), Number(t.slice(5, 7)) - 1, 0)); }
+}
+function vLaporan(skipRun) {
+  const noDate = ['stok', 'hpp'].indexOf(S.rt) >= 0, tabs = RTYPES.map(t => '<button class="chip ' + (S.rt === t[0] ? 'on' : '') + '" data-act="rt" data-t="' + t[0] + '">' + t[1] + '</button>').join('');
+  $('#main').innerHTML = '<button class="chip" data-act="tab" data-t="menu">← Menu</button><div class="rt-chips" style="margin-top:8px">' + wrapChips(tabs) + '</div>' +
+    '<label class="rt-sel" style="margin-top:8px">Jenis laporan<select class="inp" data-chg="rtsel">' + RTYPES.map(t => '<option value="' + t[0] + '"' + (S.rt === t[0] ? ' selected' : '') + '>' + t[1] + '</option>').join('') + '</select></label>' +
+    (noDate ? '' : wrapChips(PRE.map(p => '<button class="chip ' + (S.rpre === p[0] ? 'on' : '') + '" data-act="rpre" data-p="' + p[0] + '">' + p[1] + '</button>').join('')) + '<p class="muted rcap">' + esc(idRange(S.rfrom, S.rto)) + '</p>' +
+      (S.rpre === 'custom' ? '<div class="row2"><div style="flex:1"><label>Dari<input type="date" class="inp" data-rg="rfrom" value="' + S.rfrom + '"></label></div><div style="flex:1"><label>Sampai<input type="date" class="inp" data-rg="rto" value="' + S.rto + '"></label></div></div><button class="btn pri" data-act="rrun" style="margin-top:0">Tampilkan</button>' : '')) + '<div id="rres" style="margin-top:10px"></div>';
+  if (!skipRun) runReport();
 }
 function fmtCell(v, f) { return f === 'rp' ? rp(v) : f === 'num' ? dec(v) : f === 'pct' ? pct(v) : esc(v); }
 function runReport() {
   const el = $('#rres'); if (!el) return; el.innerHTML = skel(4); const want = S.rt;
   api('report.get', {type: want, from: S.rfrom, to: S.rto}).then(r => {
     if (S.tab !== 'laporan' || S.rt !== want || !$('#rres')) return; S.rres = r;
-    $('#rres').innerHTML = '<b>' + esc(r.title) + '</b> <span class="muted">' + (['stok', 'hpp'].indexOf(want) >= 0 ? 'kondisi saat ini' : r.from + ' s/d ' + r.to) + '</span>' +
-      (r.summary.length ? '<div class="kgrid" style="margin-top:8px">' + r.summary.map(s => kpi(esc(s.label), fmtCell(s.value, s.fmt), '')).join('') + '</div>' : '') +
-      '<div class="tw"><table><thead><tr>' + r.columns.map((c, i) => '<th class="' + (r.fmt[i] === 'txt' ? '' : 'n') + '">' + esc(c) + '</th>').join('') + '</tr></thead><tbody>' +
-      (r.rows.map(row => '<tr>' + row.map((v, i) => '<td class="' + (r.fmt[i] === 'txt' ? '' : 'n') + '">' + fmtCell(v, r.fmt[i]) + '</td>').join('') + '</tr>').join('') || '<tr><td colspan="' + r.columns.length + '" class="muted">Tidak ada data pada periode ini.</td></tr>') + '</tbody></table></div>' +
+    const mgIdx = r.type === 'penjualan' ? 6 : r.type === 'hpp' ? 7 : -1, cell = (row, i, v) => (i === mgIdx && !(Number(row[4]) > 0)) ? qMark : fmtCell(v, r.fmt[i]);
+    $('#rres').innerHTML = '<div id="hppw"></div><b>' + esc(r.title) + '</b> <span class="muted">' + (['stok', 'hpp'].indexOf(want) >= 0 ? 'kondisi saat ini' : esc(idRange(r.from, r.to))) + '</span>' +
+      (r.summary.length ? '<div class="kgrid" style="margin-top:8px">' + r.summary.map(s => kpi(esc(s.label), /^Margin/.test(s.label) ? '<span class="mgv" data-v="' + s.value + '">' + fmtCell(s.value, s.fmt) + '</span>' : fmtCell(s.value, s.fmt), '')).join('') + '</div>' : '') +
+      (r.rows.length ? '<div class="tw"><table><thead><tr>' + r.columns.map((c, i) => '<th class="' + (r.fmt[i] === 'txt' ? '' : 'n') + '">' + esc(c) + '</th>').join('') + '</tr></thead><tbody>' +
+        r.rows.map(row => '<tr>' + row.map((v, i) => '<td class="' + (r.fmt[i] === 'txt' ? '' : 'n') + '">' + cell(row, i, v) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>' :
+        emptyState('laporan', 'Tidak ada data', 'Belum ada data pada periode ini. Pilih periode lain.', '')) +
       '<div class="row2"><button class="btn sec" data-act="rcsv">Unduh CSV</button><button class="btn sec" data-act="rwa">Bagikan WhatsApp</button></div>';
+    const show = v => { if (!v.n || !$('#hppw')) return; $('#hppw').innerHTML = warnBanner(v); document.querySelectorAll('.mgv').forEach(e => { if (Number(e.dataset.v) >= 99.5) e.innerHTML = qMark; }); };
+    if (r.type === 'penjualan' || r.type === 'hpp') show(hppOf(r.rows)); else if (r.type === 'labarugi' || r.type === 'channel') hppCheck(r.from, r.to).then(show).catch(() => {});
   }).catch(e => { if ($('#rres')) $('#rres').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; });
 }
 function csvText(r) { const q = x => '"' + String(x == null ? '' : x).replace(/"/g, '""') + '"'; return [r.columns.map(q).join(',')].concat(r.rows.map(row => row.map(q).join(','))).join('\r\n'); }
@@ -318,6 +346,8 @@ Object.assign(ACT, {
   caudit: stockAudit, cekgo: el => { const t = el.dataset.t; if (t === 'resep' || t === 'stok') S.tab = t; else { S.mt = t; S.tab = 'master'; } A.render(); },
   creco: el => busy('Menyelaraskan riwayat…', async () => { try { await api('stock.reconcile', {tipe: el.dataset.t, id: el.dataset.id}); toast('Riwayat disesuaikan'); stockAudit(); } catch (e) { toast(e.message); } }),
   dp: el => { S.dp = el.dataset.p; vDash(); },
+  bar: el => { const s = (S.dser || [])[Number(el.dataset.i)], bt = $('#bt'); if (!s || !bt) return; bt.innerHTML = '<b>' + esc(idDate(s.d)) + '</b> · Omzet <b>' + rp(s.omzet) + '</b> · Laba kotor <b>' + rp(s.laba) + '</b>'; document.querySelectorAll('.bchart [data-b]').forEach(r => { r.style.opacity = r.dataset.b === el.dataset.i ? 1 : .35; }); },
+  rpre: el => { S.rpre = el.dataset.p; if (S.rpre !== 'custom') setPreset(); vLaporan(S.rpre === 'custom'); },
   pnew: prodNew, pjenis: el => { S.pform.jenis = el.dataset.j; prodNew(); },
   psave: () => busy('Menyimpan rencana…', async () => { try { await api('production.create', {recipe_id: S.pform.recipe, jumlah_batch: N(S.pform.batch), jenis: S.pform.jenis, catatan: S.pform.catatan}); closeSheet(); toast('Rencana produksi tersimpan'); vProduksi(); } catch (e) { toast(e.message); } }),
   pdetail: el => prodDetail(el.dataset.id), pdone: el => prodDone(el.dataset.id),
@@ -360,7 +390,9 @@ document.addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'shfile' && t.files && t.files[0]) { const f = t.files[0]; (f.text ? f.text() : new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsText(f); })).then(shLoad); }
   else if (t.dataset && t.dataset.sm) { S.sh.map[t.dataset.sm] = Number(t.value); vShopee(); }
+  else if (t.dataset && t.dataset.chg === 'rtsel') { S.rt = t.value; vLaporan(); }
 });
+A.issueCount = () => { try { return checks().filter(x => x.lv === 'err').length; } catch (e) { return 0; } };
 Object.assign(A.views, {dash: vDash, produksi: vProduksi, resep: vResep, laporan: vLaporan, shopee: vShopee, cek: vCek, arsip: vArsip});
 Object.assign(A, {shopeeText: shLoad, parseCSV: parseCSV, parseNum: parseNum, normDate: normDate});
 A.start();

@@ -162,3 +162,69 @@ button.badge{border:0;font-family:inherit;cursor:pointer}
   .kright .paybox,.kright details,.kright #tot,.kright .cp-h{flex:none}
   .kright #paybtn{position:static;flex:none;box-shadow:0 2px 0 #c99500,0 6px 14px rgba(242,182,0,.35)}
 }
+
+/* ===== v1.4.0: penyempurnaan UI/UX ===== */
+/* Token: skala spasi 4/8/12/16/24, radius dan bayangan seragam, kontras >= 4.5:1 */
+:root{--s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;--r-sm:12px;--r-md:16px;--r-lg:24px;--sh-sm:0 1px 2px rgba(74,20,20,.08);--sh-md:0 1px 2px rgba(74,20,20,.08),0 6px 18px rgba(74,20,20,.07);--mut:#6B5252;--warn:#A04A00;--wa:#15803D}
+.li,.card-s,.kpi,.mi,.paybox,#tot,.card.pc,.set-card{border-radius:var(--r-md);box-shadow:var(--sh-md)}
+.li{padding:var(--s3) var(--s4);margin-bottom:var(--s2)}.card-s{padding:var(--s4);margin-bottom:var(--s3)}.kpi{padding:var(--s3) var(--s4)}.mi{padding:var(--s3) var(--s4);margin-bottom:var(--s2)}
+.kgrid{gap:var(--s3)}.grid{gap:var(--s3);grid-auto-rows:1fr}.grp{margin-bottom:var(--s4)}.sheet{border-radius:var(--r-lg) var(--r-lg) 0 0;padding:var(--s2) var(--s4) calc(var(--s4) + env(safe-area-inset-bottom))}
+.muted{color:var(--mut)}label{color:#5a3f3f}::placeholder{color:#757575;opacity:1}
+/* Aksesibilitas: label nav >= 12px, sasaran sentuh >= 44px, fokus terlihat */
+.nav button{font-size:12px;color:#6F5555;min-height:56px}.nav button.on{color:var(--mar)}
+.chip{min-height:44px;padding:0 var(--s4)}.seg button{min-height:44px}.btn.sm{min-height:44px}.qty button{width:44px;height:44px}.step button{width:44px;height:44px}.step{padding:4px}
+button.badge{position:relative}button.badge::after{content:"";position:absolute;inset:-9px -4px}
+:focus-visible{outline:3px solid var(--mar);outline-offset:2px}
+.top :focus-visible,.cartbar:focus-visible,.profile :focus-visible,.step :focus-visible,.lg-hero :focus-visible,.step:focus-visible{outline-color:var(--yel)}
+.inp:focus{outline:0}.inp:focus-visible{outline:3px solid var(--mar);outline-offset:1px}
+.btn.wa{background:var(--wa)}.stk.low{color:var(--warn)}.sz{color:#5a3f3f}
+.tag{background:#B45309}.tag.red{background:var(--err)}.tag.grn{background:var(--ok)}.tag.busy{background:var(--mar)}
+/* Status sinkron: tiga status jelas (hijau, oranye, abu) */
+.badge{gap:0}.badge::before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor;margin-right:6px;flex:none}
+.badge.ok{background:#fff;color:#166534}.badge.wait{background:#FFD9A0;color:#5B2E00}.badge.off{background:#E5E7EB;color:#374151}.badge.warn{background:var(--err);color:#fff}
+.badge.spin::before{width:9px;height:9px;background:none;border:2px solid currentColor;border-top-color:transparent;box-sizing:border-box}
+/* Kasir */
+.card.pc{min-height:156px}.card.pc.off{opacity:1}.card.pc.off .pn,.card.pc.off .pm,.card.pc.off .pr,.card.pc.off .stk{opacity:.5}
+.pn{padding-right:0}.lvt{font-weight:700;color:var(--mut);white-space:nowrap}
+.badge-out{position:absolute;top:12px;right:10px;z-index:1;background:var(--err);color:#fff;font:800 12px/1 system-ui;letter-spacing:.5px;padding:5px 9px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.badge-out.warn{background:#B45309}
+.card.pc.off .pn{padding-right:64px}
+.plus{width:44px;height:44px;font-size:24px}.plus.dis{background:#E4DACB;color:#6B5252;box-shadow:none;cursor:not-allowed}
+.krow{display:flex;align-items:center;justify-content:space-between;gap:var(--s3);margin:0 0 var(--s1)}
+/* Chip dengan petunjuk geser */
+.chips-wrap{position:relative}
+.chips-wrap::before,.chips-wrap::after{content:"";position:absolute;top:0;bottom:8px;width:32px;pointer-events:none;opacity:0;transition:opacity .15s;z-index:1}
+.chips-wrap::after{right:0;background:linear-gradient(90deg,rgba(251,245,234,0),var(--bg) 85%)}
+.chips-wrap::before{left:0;background:linear-gradient(270deg,rgba(251,245,234,0),var(--bg) 85%)}
+.chips-wrap.fade-r::after,.chips-wrap.fade-l::before{opacity:1}
+.rt-sel{display:none}@media (max-width:399.98px){.rt-chips{display:none}.rt-sel{display:block}}
+.rcap{margin:var(--s1) 0 var(--s3);font-weight:600}
+/* Toggle switch (seluruh baris = area sentuh >= 44px) */
+.sw{position:relative;display:flex;align-items:center;gap:var(--s3);min-height:52px;padding:6px 0;cursor:pointer;font-size:15px;color:var(--ink)}
+.sw input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.sw-t{flex:none;order:2;margin-left:auto;width:52px;height:32px;border-radius:16px;background:#8C7B7B;position:relative;transition:background .2s}
+.sw-t::after{content:"";position:absolute;top:4px;left:4px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:transform .2s}
+.sw input:checked+.sw-t{background:var(--ok)}.sw input:checked+.sw-t::after{transform:translateX(20px)}
+.sw input:focus-visible+.sw-t{outline:3px solid var(--mar);outline-offset:2px}
+.sw-l{order:1;flex:1;display:flex;flex-direction:column;line-height:1.25}.sw-l small{color:var(--mut);font-size:12.5px;font-weight:400}
+.sw.sm{min-height:44px;font-size:13px;flex:none}.sw.sm .sw-t{width:44px;height:26px}.sw.sm .sw-t::after{width:20px;height:20px;top:3px;left:3px}.sw.sm input:checked+.sw-t::after{transform:translateX(18px)}.sw.sm .sw-l{flex:none;order:1;margin-right:var(--s2)}.sw.sm .sw-t{margin-left:0}
+/* Pengaturan */
+.set-card{background:#fff;padding:var(--s4);margin-bottom:var(--s3)}.set-card h3{margin:0 0 var(--s2);font:800 16px var(--head);color:var(--mar)}.set-card [hidden]{display:none}
+main.col{display:flex;flex-direction:column;padding-bottom:0}main.col #sf{flex:1 0 auto}
+.savebar{position:sticky;bottom:0;z-index:4;margin:var(--s3) calc(-1 * var(--s4)) 0;padding:var(--s3) var(--s4) var(--s3);background:linear-gradient(rgba(251,245,234,0),var(--bg) 28%)}
+.savebar .btn{margin-top:0}
+/* Stok */
+.bdg{display:inline-flex;align-items:center;font-size:12px;font-weight:800;border-radius:8px;padding:3px 9px;color:#fff}.bdg.out{background:var(--err)}.bdg.low{background:#B45309}
+.ssum{display:flex;flex-wrap:wrap;gap:var(--s2);align-items:center;min-height:28px;margin:0 0 var(--s2)}
+.st-row{display:flex;align-items:center;gap:var(--s3);width:100%;text-align:left;font:inherit}.st-n{flex:1;min-width:0}.st-v{display:flex;flex-direction:column;align-items:flex-end;gap:var(--s1);text-align:right}.st-row>.ic{color:#9b8a8a;flex:none}
+/* State kosong, peringatan, grafik */
+.empty-s{text-align:center;padding:var(--s5) var(--s4)}.es-i{width:72px;height:72px;border-radius:50%;background:#FFF1CC;color:var(--mar);display:flex;align-items:center;justify-content:center;margin:0 auto var(--s3)}
+.empty-s h3{margin:0 0 var(--s1);font:800 18px var(--head);color:var(--mar)}.empty-s p{margin:0 0 var(--s4);color:var(--mut)}.empty-s .btn{max-width:320px;margin:var(--s2) auto 0}
+.warn-b{display:flex;gap:var(--s3);align-items:center;background:#FFF1CC;border:1.5px solid #B45309;border-radius:var(--r-md);padding:var(--s3) var(--s4);margin-bottom:var(--s3)}.warn-b .btn{width:auto;margin:0;padding:0 var(--s4);flex:none}
+@media (max-width:420px){.warn-b{flex-direction:column;align-items:stretch}.warn-b .btn{width:100%}}
+.q-m{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 4px;border-radius:11px;background:#FFE2B8;color:#7A3A00;font-weight:800;font-size:13px}
+.btip{background:#fff;border-radius:var(--r-sm);padding:var(--s2) var(--s3);margin:var(--s2) 0;font-size:13px;color:var(--mut);box-shadow:var(--sh-sm);min-height:38px;display:flex;align-items:center}
+.lgd{display:inline-block;width:12px;height:12px;border-radius:3px;margin:0 6px 0 var(--s3);vertical-align:-1px}.kpi.wide{grid-column:1/-1}
+/* Menu */
+.mi-b{min-width:24px;height:24px;padding:0 7px;border-radius:12px;background:var(--err);color:#fff;font:800 12px/24px system-ui;text-align:center;flex:none}
+.grp-out{margin-top:32px}
