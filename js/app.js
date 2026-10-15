@@ -190,6 +190,7 @@ function initFades() { // petunjuk geser: gradient di tepi chip yang bisa digese
     upd();
   });
 }
+const isAddon = v => String((pById(v.product_id) || {}).kategori || '').trim().toLowerCase() === 'tambahan'; // produk tambahan (mis. kantong kresek) tampil di menu pembayaran, bukan di daftar produk
 const lvText = lv => { const raw = String(lv == null ? '' : lv).trim(); return !raw ? '' : /^\d+$/.test(raw) ? 'Lv ' + raw : raw; };
 IC.install = '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>';
 const buzz = () => { try { navigator.vibrate && navigator.vibrate(12); } catch (e) {} };
@@ -350,7 +351,7 @@ const chShort = n => /whatsapp/i.test(n) ? 'WA / IG' : n;
 const isWide = () => !!(window.matchMedia && matchMedia('(min-width: 900px)').matches); // tablet: layar terbagi, daftar produk kiri dan pesanan kanan
 function vKasir() {
   const d = S.data, wide = isWide(); S.cart = S.cart.filter(l => vById(l.v));
-  const withV = new Set(d.variants.map(v => v.product_id)), cats = ['Semua'].concat(Array.from(new Set(d.products.filter(p => withV.has(p.id)).map(p => String(p.kategori == null ? '' : p.kategori)).filter(Boolean)))), noV = d.products.filter(p => !withV.has(p.id)).length;
+  const withAny = new Set(d.variants.map(v => v.product_id)), withV = new Set(d.variants.filter(v => !isAddon(v)).map(v => v.product_id)), cats = ['Semua'].concat(Array.from(new Set(d.products.filter(p => withV.has(p.id)).map(p => String(p.kategori == null ? '' : p.kategori)).filter(Boolean)))), noV = d.products.filter(p => !withAny.has(p.id)).length;
   if (S.cat !== 'Semua' && cats.indexOf(S.cat) < 0) S.cat = 'Semua';
   const top = '<div class="kasir-top">' + (own() && noV ? '<div class="notice"><span>' + noV + ' produk belum punya varian, jadi belum tampil di sini.</span><button class="chip" data-act="go_cek">Periksa data</button></div>' : '') + '<button id="qstat" data-act="queue"></button>' +
     '<div class="seg">' + d.channels.map(c => '<button class="' + (c.id === S.ch ? 'on' : '') + '" data-act="chan" data-c="' + esc(c.id) + '">' + esc(chShort(c.nama)) + '</button>').join('') + '</div>' +
@@ -372,7 +373,7 @@ function cardHtml(v) {
 }
 function grid() {
   const d = S.data, q = S.q.toLowerCase(), avail = v => (Number(v.stok) || 0) > 0;
-  const base = d.variants.filter(v => (S.cat === 'Semua' || String((pById(v.product_id) || {}).kategori) === S.cat) && (!q || (vName(v) + ' ' + vSub(v) + ' ' + v.sku).toLowerCase().indexOf(q) >= 0));
+  const base = d.variants.filter(v => !isAddon(v) && (S.cat === 'Semua' || String((pById(v.product_id) || {}).kategori) === S.cat) && (!q || (vName(v) + ' ' + vSub(v) + ' ' + v.sku).toLowerCase().indexOf(q) >= 0));
   let list = S.hideOut ? base.filter(avail) : base;
   list = list.map((v, i) => [v, i]).sort((x, y) => (avail(y[0]) - avail(x[0])) || (x[1] - y[1])).map(x => x[0]); // tersedia di atas, habis di bawah, urutan asli dijaga
   const kc = $('#kcount'); if (kc) kc.textContent = list.length + ' produk' + (S.hideOut && base.length > list.length ? ' · ' + (base.length - list.length) + ' habis disembunyikan' : '');
@@ -402,18 +403,18 @@ function addToCart(id) {
   const l = S.cart.find(x => x.v === id), q = (l ? l.qty : 0) + 1, st = Number(v.stok) || 0;
   if (T(cfg('blokir_stok_minus')) && q > st) return toast(st > 0 ? 'Stok tidak cukup' : 'Stok habis');
   if (l) l.qty = q; else S.cart.push({v: id, qty: 1});
-  saveCart(); updCard(id); cartbar(); buzz();
+  saveCart(); updCard(id); syncCart(); buzz();
 }
 function dropFromCart(id) {
   const i = S.cart.findIndex(x => x.v === id); if (i < 0) return;
-  S.cart[i].qty--; if (S.cart[i].qty <= 0) S.cart.splice(i, 1); saveCart(); updCard(id); cartbar();
+  S.cart[i].qty--; if (S.cart[i].qty <= 0) S.cart.splice(i, 1); saveCart(); updCard(id); syncCart();
 }
 const methodChips = () => ['tunai', 'transfer', 'qris'].map(m => '<button class="chip ' + (S.metode === m ? 'on' : '') + '" data-act="metode" data-m="' + m + '">' + m.toUpperCase() + '</button>').join('');
 function cartLines() {
   const el = $('#cl'); if (!el) return;
   if (!S.cart.length) { el.innerHTML = '<div class="cp-empty">' + svg('kasir', 34) + '<p>Ketuk produk di sebelah kiri untuk menambahkannya ke pesanan.</p></div>'; return; }
   el.innerHTML = S.cart.map((l, i) => { const v = vById(l.v), p = priceOf(l.v, S.ch) || 0;
-    return '<div class="li cl-i"><div class="cl-n"><b>' + esc(vName(v)) + '</b><div class="muted">' + esc(vSub(v)) + ' · ' + rp(p) + '</div></div><div class="qty"><button data-act="dec" data-i="' + i + '" aria-label="Kurangi">−</button><span>' + l.qty + '</span><button data-act="inc" data-i="' + i + '" aria-label="Tambah">+</button></div><b class="cl-t">' + rp(p * l.qty) + '</b></div>'; }).join('');
+    return '<div class="li cl-i"><div class="cl-n"><b>' + esc(vName(v)) + '</b><div class="muted">' + esc([vSub(v), rp(p)].filter(Boolean).join(' · ')) + '</div></div><div class="qty"><button data-act="dec" data-i="' + i + '" aria-label="Kurangi">−</button><span>' + l.qty + '</span><button data-act="inc" data-i="' + i + '" aria-label="Tambah">+</button></div><b class="cl-t">' + rp(p * l.qty) + '</b></div>'; }).join('');
 }
 function cashBox() {
   const el = $('#cashbox'); if (!el) return;
@@ -423,11 +424,20 @@ function cashBox() {
 }
 function cartInner(panel) {
   return (panel ? '<div class="cp-h"><h2>Pesanan</h2><span class="muted">' + esc(chName(S.ch)) + '</span></div>' : '<div class="grab"></div><div class="sh-h"><h2>Pembayaran</h2><span class="muted">' + esc(chName(S.ch)) + '</span></div>') +
-    '<div id="cl"></div><div class="paybox"><div class="chips" id="mchips">' + methodChips() + '</div><div id="cashbox"></div></div>' +
+    '<div id="cl"></div><div id="addons"></div><div class="paybox"><div class="chips" id="mchips">' + methodChips() + '</div><div id="cashbox"></div></div>' +
     '<details class="more"' + (S.diskon || S.catatan ? ' open' : '') + '><summary>Diskon dan catatan</summary><label>Diskon (Rp)<input class="inp" data-in="diskon" inputmode="numeric" value="' + esc(S.diskon) + '"></label><label>Catatan<input class="inp" data-in="catatan" value="' + esc(S.catatan) + '"></label></details>' +
     '<div id="tot"></div><button class="btn pri big" id="paybtn" data-act="pay">Bayar</button>';
 }
-const mountCart = () => { cartLines(); cashBox(); upd(); };
+function addonsRender() { // menu pembayaran: "Tambahan" seperti retail modern (kantong kresek, dll.)
+  const el = $('#addons'); if (!el) return; const L = S.data.variants.filter(v => isAddon(v) && priceOf(v.id, S.ch) != null), block = T(cfg('blokir_stok_minus'));
+  if (!L.length) { el.innerHTML = own() ? '<p class="muted ad-none">Belum ada produk tambahan (mis. kantong kresek). Buat di Pengaturan, kartu "Kantong & Tambahan".</p>' : ''; return; }
+  el.innerHTML = '<div class="ad-h">Tambahan</div>' + L.map(v => { const q = cartQty(v.id), st = Number(v.stok) || 0, out = block && st <= 0, nm = esc(vName(v) + (v.ukuran ? ' ' + v.ukuran : ''));
+    return '<div class="ad-row"><div class="ad-n"><b>' + nm + '</b><small>' + rp(priceOf(v.id, S.ch)) + (out ? ' · habis' : '') + '</small></div>' +
+      (q ? '<div class="qty"><button data-act="dec1" data-v="' + esc(v.id) + '" aria-label="Kurangi ' + nm + '">−</button><span>' + q + '</span><button data-act="inc1" data-v="' + esc(v.id) + '" aria-label="Tambah ' + nm + '">+</button></div>' : '<button class="chip ad-add" data-act="inc1" data-v="' + esc(v.id) + '"' + (out ? ' aria-disabled="true"' : '') + '>+ Tambah</button>') + '</div>'; }).join('');
+}
+function refreshCart() { cartLines(); addonsRender(); cashBox(); upd(); if (!S.cart.length && !isWide() && $('#sheet') && !$('#sheet').hidden && $('#cl')) closeSheet(); }
+const syncCart = () => { if ($('#cl')) refreshCart(); else cartbar(); };
+const mountCart = () => { cartLines(); addonsRender(); cashBox(); upd(); };
 function cartSheet() { if (isWide() || !S.cart.length) return; sheet(cartInner(false)); mountCart(); }
 function upd() {
   const c = calc(), s = S.data.settings, kv = (a, b, cl) => '<div class="kv ' + (cl || '') + '"><span>' + a + '</span><span>' + b + '</span></div>', tunai = S.metode === 'tunai', terima = S.terima === '' ? null : Number(S.terima) || 0;
@@ -447,7 +457,7 @@ function pay() {
     const rid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(16).slice(2);
     const payload = {request_id: rid, channel_id: S.ch, items: S.cart.map(l => ({variant_id: l.v, qty: l.qty})), diskon: c.dis, metode_bayar: S.metode, catatan: S.catatan};
     rc = {rid: rid, time: Date.now(), ch: chName(S.ch), metode: S.metode, terima: terima, kembali: terima - c.total, sub: c.sub, dis: c.dis, ppn: c.ppn, total: c.total,
-      lines: S.cart.map(l => { const v = vById(l.v); return {n: vName(v) + ' ' + vSub(v), q: l.qty, h: priceOf(l.v, S.ch)}; })};
+      lines: S.cart.map(l => { const v = vById(l.v); return {n: (vName(v) + ' ' + vSub(v)).trim(), q: l.qty, h: priceOf(l.v, S.ch)}; })};
     S.queue.push({rid: rid, payload: payload, status: 'pending', state: 'waiting', ts: Date.now(), uid: S.data.user.uid, total: c.total, ch: rc.ch}); LS.set('queue', S.queue);
     S.cart.forEach(l => { const v = vById(l.v); if (v) v.stok = r6((Number(v.stok) || 0) - l.qty); }); LS.set('data', S.data);
   } catch (e) { S.paying = false; logErr(e, 'bayar'); return toast('Transaksi gagal disimpan: ' + e.message); }
@@ -648,6 +658,25 @@ function sDepUpd() { // field yang bergantung: tarif PPN hanya saat PPN aktif; o
   const h = $('#oh-hint'); if (h) h.textContent = m === 'per_batch' ? 'Biaya overhead (gas, listrik, dll.) dihitung tetap setiap sekali produksi, berapa pun hasilnya.' : 'Biaya overhead (gas, listrik, dll.) dihitung per bungkus yang dihasilkan. Contoh: Rp300 × 118 bungkus.';
 }
 function sDirty() { S.dirty = setSnap() !== S.sSnap; const b = $('#ssavebtn'); if (b) b.disabled = !S.dirty; sDepUpd(); }
+const swRow = (attr, l, sub, on, dis) => '<label class="sw"><input type="checkbox" ' + attr + (on ? ' checked' : '') + (dis ? ' disabled' : '') + '><span class="sw-t" aria-hidden="true"></span><span class="sw-l"><b>' + l + '</b>' + (sub ? '<small>' + sub + '</small>' : '') + '</span></label>';
+function addonSheet() {
+  sheet('<div class="grab"></div><h2>Buat produk tambahan</h2><p class="muted">Contoh: kantong kresek. Muncul di menu pembayaran kasir sebagai "Tambahan". Harga berlaku untuk semua channel; stok berkurang otomatis setiap terjual.</p>' +
+    '<label>Nama<input class="inp" id="ad_n" value="Kantong Kresek"></label><div class="row2"><div style="flex:1"><label>Harga jual (Rp)<input class="inp" id="ad_h" inputmode="decimal" value="500"></label></div><div style="flex:1"><label>Biaya/HPP per buah (Rp)<input class="inp" id="ad_c" inputmode="decimal" value="0"></label></div></div>' +
+    '<label>Stok awal (jumlah)<input class="inp" id="ad_s" inputmode="decimal" value="100"></label><button class="btn pri" data-act="addonsave">Simpan</button><button class="btn sec" data-act="close">Batal</button>');
+}
+function resetSheet() {
+  const n = S.queue.length;
+  sheet('<div class="grab"></div><h2>Reset data transaksi</h2><div class="warn-b" role="alert"><div><b>Tidak bisa dibatalkan dari aplikasi.</b><div class="muted">Menghapus riwayat transaksi untuk pemutihan. Data master (produk, varian, harga, bahan, resep, pengguna, pengaturan) tidak dihapus. Cadangan seluruh database dibuat otomatis di Google Drive (folder "Duado Backup") sebelum menghapus; bila cadangan gagal, tidak ada yang dihapus.</div></div></div>' +
+    '<div class="set-card" style="padding:4px 12px">' + swRow('', 'Penjualan dan rinciannya', 'Selalu dihapus', true, true) + swRow('data-rs="pembelian"', 'Pembelian bahan', '', true) + swRow('data-rs="produksi"', 'Produksi dan biayanya', '', true) + swRow('data-rs="biaya"', 'Biaya operasional', '', true) +
+    swRow('data-rs="nol"', 'Nolkan juga semua stok', 'Tanpa ini, stok dan HPP saat ini dipertahankan sebagai saldo awal', false) + '</div>' +
+    (n ? '<p class="err">Masih ada ' + n + ' transaksi belum terkirim di perangkat ini. Kirim dulu lewat Menu, Perbarui data.</p>' : '<p class="muted">Pastikan semua perangkat kasir berstatus Tersinkron sebelum reset.</p>') +
+    '<label>Ketik <b>RESET</b> untuk melanjutkan<input class="inp" id="rs_c" data-rs="c" autocomplete="off" autocapitalize="characters"></label><button class="btn dan big" id="rsbtn" data-act="resetgo" disabled>Reset sekarang</button><button class="btn sec" data-act="close">Batal</button>');
+}
+function resetResult(r) {
+  const L = {sales: 'Penjualan', sale_items: 'Rincian penjualan', purchases: 'Pembelian', purchase_items: 'Rincian pembelian', production_orders: 'Produksi', production_costs: 'Biaya produksi', expenses: 'Biaya operasional', stock_movements: 'Mutasi stok'};
+  sheet('<div class="grab"></div><div class="okmark">' + svg('check', 30) + '</div><h2 class="c">Reset selesai</h2>' + Object.keys(r.dihapus).map(k => '<div class="kv"><span>' + (L[k] || k) + '</span><span>' + num(r.dihapus[k]) + ' baris dihapus</span></div>').join('') +
+    '<p class="muted">Cadangan sebelum reset: <a href="' + esc(r.backup) + '" target="_blank" rel="noopener">buka di Google Drive</a>.</p><button class="btn pri big" data-act="close">Selesai</button>');
+}
 function vSettings() {
   const s = S.data.settings, g = (k, d) => (s[k] == null || s[k] === '' ? d : s[k]), card = (t, h) => '<section class="set-card"><h3>' + t + '</h3>' + h + '</section>';
   const sw = (k, l, sub) => '<label class="sw"><input type="checkbox" data-f="' + k + '"' + (T(s[k]) ? ' checked' : '') + '><span class="sw-t" aria-hidden="true"></span><span class="sw-l"><b>' + l + '</b>' + (sub ? '<small>' + sub + '</small>' : '') + '</span></label>';
@@ -656,8 +685,12 @@ function vSettings() {
     card('Usaha & Struk', field(['nama_usaha', 'Nama usaha'], s.nama_usaha) + field(['footer_struk', 'Teks bawah struk'], s.footer_struk) + selF('lebar_struk', 'Lebar kertas struk', [['32', '58 mm (32 karakter)'], ['48', '80 mm (48 karakter)']], g('lebar_struk', '32'))) +
     card('Pajak (PPN)', sw('ppn_aktif', 'Aktifkan PPN', 'Hitung PPN pada setiap transaksi') + '<div id="ppn-x">' + field(['ppn_persen', 'Tarif PPN (%)', 'number'], s.ppn_persen) + sw('ppn_inklusif', 'Harga jual sudah termasuk PPN') + '</div>') +
     card('Stok', sw('blokir_stok_minus', 'Blokir penjualan jika stok kurang', 'Kasir tidak bisa menjual produk yang stoknya habis') + field(['stok_menipis', 'Batas "Menipis" produk jadi (jumlah)', 'number'], g('stok_menipis', '5'))) +
+    card('Kantong & Tambahan', '<p class="muted">Produk berkategori "Tambahan" (mis. kantong kresek) muncul di menu pembayaran kasir sebagai pilihan tambahan, bukan di daftar produk.</p>' +
+      (S.data.variants.filter(isAddon).map(v => '<div class="kv"><span>' + esc(vName(v)) + '</span><span>' + rp(priceOf(v.id, S.ch) || 0) + ' · stok ' + num(v.stok) + '</span></div>').join('') || '<p class="muted">Belum ada produk tambahan.</p>') +
+      '<button class="btn sec sm" data-act="addonnew">+ Buat produk tambahan (kresek)</button>') +
     card('Printer', sw('auto_cetak', 'Langsung cetak setelah bayar', 'RawBT (Android) atau printer Bluetooth BLE') + '<button class="btn sec sm" data-act="go_diag">Atur dan uji printer</button>') +
     card('HPP & Overhead', selF('metode_overhead', 'Cara menghitung overhead', [['per_unit', 'Per bungkus'], ['per_batch', 'Per sekali produksi']], g('metode_overhead', 'per_unit')) + '<p class="muted" id="oh-hint"></p><div id="oh-unit">' + field(['overhead_per_unit', 'Overhead per bungkus (Rp)', 'number'], s.overhead_per_unit) + '</div><div id="oh-batch">' + field(['overhead_per_batch', 'Overhead per sekali produksi (Rp)', 'number'], s.overhead_per_batch) + '</div>' + field(['target_margin', 'Target margin minimum (%)', 'number'], g('target_margin', 30))) +
+    card('Zona berbahaya', '<p class="muted">Pemutihan data: menghapus riwayat transaksi. Data master tidak dihapus dan cadangan Google Drive dibuat otomatis lebih dulu.</p><button class="btn dan sm" data-act="resetopen">Reset data transaksi…</button>') +
     '</div><div class="savebar"><button class="btn pri big" id="ssavebtn" data-act="ssave" disabled>Simpan pengaturan</button></div>';
   S.sSnap = setSnap(); S.dirty = false; sDepUpd();
 }
@@ -681,11 +714,18 @@ const ACT = {
   cat: el => { S.cat = el.dataset.c; vKasir(); },
   add: el => { if (el.classList.contains('off')) { const v = vById(el.dataset.v); return toast(priceOf(el.dataset.v, S.ch) == null ? 'Harga belum diatur untuk channel ini' : 'Stok habis'); } addToCart(el.dataset.v); },
   inc1: el => addToCart(el.dataset.v), dec1: el => dropFromCart(el.dataset.v),
-  inc: el => { const l = S.cart[el.dataset.i]; if (!l) return; const st = Number(vById(l.v).stok) || 0; if (T(cfg('blokir_stok_minus')) && l.qty + 1 > st) return toast('Stok tidak cukup'); l.qty++; saveCart(); cartLines(); cashBox(); upd(); updCard(l.v); buzz(); },
-  dec: el => { const l = S.cart[el.dataset.i]; if (!l) return; const id = l.v; l.qty--; if (l.qty <= 0) S.cart.splice(el.dataset.i, 1); saveCart(); if (!S.cart.length && !isWide()) closeSheet(); cartLines(); cashBox(); upd(); updCard(id); },
+  inc: el => { const l = S.cart[el.dataset.i]; if (!l) return; const st = Number(vById(l.v).stok) || 0; if (T(cfg('blokir_stok_minus')) && l.qty + 1 > st) return toast('Stok tidak cukup'); l.qty++; saveCart(); cartLines(); addonsRender(); cashBox(); upd(); updCard(l.v); buzz(); },
+  dec: el => { const l = S.cart[el.dataset.i]; if (!l) return; const id = l.v; l.qty--; if (l.qty <= 0) S.cart.splice(el.dataset.i, 1); saveCart(); if (!S.cart.length && !isWide()) closeSheet(); cartLines(); addonsRender(); cashBox(); upd(); updCard(id); },
   metode: el => { S.metode = el.dataset.m; LS.set('metode', S.metode); const c = $('#mchips'); if (c) c.innerHTML = methodChips(); cashBox(); upd(); },
   qk: el => { S.terima = el.dataset.n; cashBox(); upd(); },
   wa: () => waSend(S.rc, ($('#wa') || {}).value), rawbt: () => printBT(S.rc), print: () => printBrowser(), share: () => shareRc(S.rc), copyrc: () => copyText(receiptText(S.rc)),
+  addonnew: () => { if (S.dirty) return toast('Simpan perubahan pengaturan dulu.'); addonSheet(); },
+  addonsave: () => { const n = $('#ad_n').value.trim(), h = dnum($('#ad_h').value), c = dnum($('#ad_c').value), st = dnum($('#ad_s').value); if (!n) return toast('Isi nama produk tambahan'); if (!(h >= 0)) return toast('Harga jual tidak valid');
+    return busy('Membuat produk tambahan…', async () => { try { await api('addon.create', {nama: n, harga: h, hpp: isNaN(c) ? 0 : c, stok: isNaN(st) ? 0 : st}); await loadData(); closeSheet(); render(); toast('Produk tambahan dibuat'); } catch (e) { toast(e.message); } }); },
+  resetopen: () => { if (S.dirty) return toast('Simpan perubahan pengaturan dulu.'); resetSheet(); },
+  resetgo: () => { const q = k => { const e = document.querySelector('#sheet [data-rs=' + k + ']'); return !!(e && e.checked); };
+    return busy('Membuat cadangan dan mereset data…', async () => { try { const r = await api('data.reset', {konfirmasi: 'RESET', pembelian: q('pembelian'), produksi: q('produksi'), biaya: q('biaya'), nol_stok: q('nol')});
+      ['hari', 'minggu', 'bulan'].forEach(p => LS.del('dash_' + p)); S.exp = null; S.expLoaded = false; S.day = null; await loadData(); closeSheet(); render(); resetResult(r); } catch (e) { toast(e.message); } }); },
   go_diag: () => { S.tab = 'diag'; render(); }, go_arsip: () => { S.tab = 'arsip'; render(); },
   queue: queueSheet, qnow: () => { flush(); setTimeout(() => { if (S.qopen) queueSheet(); }, 700); },
   btdirect: el => { LS.set('btdirect', !!el.checked); toast(el.checked ? 'Cetak langsung via BLE aktif' : 'Cetak lewat RawBT (Android)'); },
@@ -712,7 +752,7 @@ document.addEventListener('click', e => {
   if (S.dirty && S.tab === 'settings' && (a === 'tab' || a === 'logout' || a === 'sync' || /^go_/.test(a))) { if (!confirm('Perubahan pengaturan belum disimpan. Keluar tanpa menyimpan?')) return; S.dirty = false; }
   ACT[a](el);
 });
-document.addEventListener('input', e => { if (S.tab === 'settings' && e.target.closest && e.target.closest('#sf')) sDirty(); });
+document.addEventListener('input', e => { if (S.tab === 'settings' && e.target.closest && e.target.closest('#sf')) sDirty(); const d = e.target.dataset; if (d && d.rs === 'c') { const b = $('#rsbtn'); if (b) b.disabled = !(e.target.value.trim() === 'RESET' && !S.queue.length); } });
 document.addEventListener('change', e => { if (S.tab === 'settings' && e.target.closest && e.target.closest('#sf')) sDirty(); });
 window.addEventListener('beforeunload', e => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } });
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); S.installEv = e; if (S.tab === 'menu' && S.data) vMenu(); });
@@ -755,5 +795,5 @@ if (window.MutationObserver) new MutationObserver(() => { cancelAnimationFrame(S
 if (window.matchMedia) { const mq = matchMedia('(min-width: 900px)'); (mq.addEventListener ? mq.addEventListener.bind(mq, 'change') : mq.addListener.bind(mq))(() => { if (S.token && S.data && $('#sheet').hidden && !S.dirty) render(); }); }
 Object.assign(APP.views, {kasir: vKasir, riwayat: vRiwayat, stok: vStok, menu: vMenu, master: vMaster, users: vUsers, settings: vSettings, diag: vDiag});
 Object.assign(APP, {S: S, api: api, $: $, rp: rp, num: num, esc: esc, LS: LS, T: T, sheet: sheet, closeSheet: closeSheet, toast: toast, busy: busy, busyLabel: busyLabel, skel: skel, ACT: ACT,
-  render: render, loadData: loadData, checkUpdates: checkUpdates, dnum: dnum, qf: qf, r6: r6, flush: flush, Store: Store, isWide: isWide, skuLevel: skuLevel, wrapChips: wrapChips, emptyState: emptyState, idDate: idDate, idRange: idRange, addDays: addDays, lvText: lvText, vById: vById, pById: pById, vName: vName, vSub: vSub, chName: chName, fmtDT: fmtDT, today: today, own: own, start: start});
+  render: render, loadData: loadData, checkUpdates: checkUpdates, dnum: dnum, qf: qf, r6: r6, flush: flush, Store: Store, isWide: isWide, skuLevel: skuLevel, wrapChips: wrapChips, isAddon: isAddon, emptyState: emptyState, idDate: idDate, idRange: idRange, addDays: addDays, lvText: lvText, vById: vById, pById: pById, vName: vName, vSub: vSub, chName: chName, fmtDT: fmtDT, today: today, own: own, start: start});
 })();

@@ -137,7 +137,26 @@ function pdv() {
 /* ---------- Resep ---------- */
 function vResep() {
   $('#main').innerHTML = '<button class="chip" data-act="tab" data-t="menu">← Menu</button> <button class="chip" data-act="tab" data-t="produksi">Produksi</button><button class="btn pri" data-act="redit" data-id="" style="margin-top:8px">+ Resep baru</button><div style="height:8px"></div>' +
-    (S.data.recipes.map(r => { const c = costOf(recItems(r.id), r, 1, Number(r.hasil_standar), '', ''); return '<button class="li" style="width:100%;border:0;font:inherit;text-align:left" data-act="redit" data-id="' + esc(r.id) + '"><div><b>' + esc(r.nama) + '</b><div class="muted">' + esc(vLabel(r.variant_id)) + ' · ' + esc(JN[r.jenis] || r.jenis) + ' · ' + num(r.hasil_standar) + ' unit/batch</div></div><div class="r"><div class="muted">HPP estimasi</div><b>' + rp(c.hpp) + '</b></div></button>'; }).join('') || emptyState('produksi', 'Belum ada resep', 'Resep menentukan bahan per batch dan hasilnya, sehingga HPP produk dihitung otomatis.', '<button class="btn pri" data-act="redit" data-id="">Buat resep pertama</button>'));
+    (S.data.recipes.map(r => { const c = costOf(recItems(r.id), r, 1, Number(r.hasil_standar), '', '');
+      return '<div class="li rl"><button class="rl-main" data-act="redit" data-id="' + esc(r.id) + '"><div><b>' + esc(r.nama) + '</b><div class="muted">' + esc(vLabel(r.variant_id)) + ' · ' + esc(JN[r.jenis] || r.jenis) + ' · ' + num(r.hasil_standar) + ' unit/batch</div></div><div class="r"><div class="muted">HPP estimasi</div><b>' + rp(c.hpp) + '</b></div></button><button class="chip" data-act="rdup" data-id="' + esc(r.id) + '" aria-label="Duplikat resep ' + esc(r.nama) + '">Duplikat</button></div>'; }).join('') ||
+      emptyState('produksi', 'Belum ada resep', 'Resep menentukan bahan per batch dan hasilnya, sehingga HPP produk dihitung otomatis.', '<button class="btn pri" data-act="redit" data-id="">Buat resep pertama</button>'));
+}
+/* ---------- Duplikat resep: salin ke satu atau banyak varian sekaligus ---------- */
+function dupSheet(id) {
+  const r = S.data.recipes.find(x => x.id === id); if (!r) return;
+  const items = recItems(id), src = A.vById(r.variant_id), pid = src && src.product_id, hasR = vid => S.data.recipes.filter(x => x.variant_id === vid).map(x => x.nama);
+  const vs = S.data.variants.filter(v => v.id !== r.variant_id && !A.isAddon(v)).map((v, i) => [v, i]).sort((a, b) => ((b[0].product_id === pid) - (a[0].product_id === pid)) || (a[1] - b[1])).map(x => x[0]); // varian produk yang sama di atas
+  S.dp2 = {src: id, nama: r.nama, sel: {}};
+  sheet('<div class="grab"></div><h2>Duplikat resep</h2><p class="muted">Menyalin <b>' + esc(r.nama) + '</b>: ' + items.length + ' bahan, hasil ' + dec(r.hasil_standar) + ' unit per batch, tenaga kerja ' + rp(r.tenaga_kerja || 0) + '. Pilih varian tujuan. Setelah dibuat, tiap resep bisa disesuaikan (mis. jumlah cabai untuk level lebih pedas).</p>' +
+    '<label>Nama dasar resep<input class="inp" data-dp="nama" value="' + esc(r.nama) + '"></label>' +
+    (vs.length ? '<div class="set-card" style="padding:4px 12px;max-height:38vh;overflow:auto">' + vs.map(v => { const hr = hasR(v.id); return '<label class="sw"><input type="checkbox" data-dv="' + esc(v.id) + '"><span class="sw-t" aria-hidden="true"></span><span class="sw-l"><b>' + esc(A.vName(v) + ' ' + A.vSub(v)) + '</b><small>' + (hr.length ? 'Sudah punya resep: ' + esc(hr.join(', ')) : 'Belum punya resep') + '</small></span></label>'; }).join('') + '</div>' : '<p class="muted">Tidak ada varian lain. Tambahkan varian di Data Master dulu.</p>') +
+    '<div class="muted" id="dpn" aria-live="polite">Belum ada varian dipilih</div><div class="muted" id="dpx"></div><button class="btn pri" id="dpbtn" data-act="dpsave" disabled>Buat salinan</button><button class="btn sec" data-act="close">Batal</button>');
+}
+const dupName = v => (S.dp2.nama.trim() || 'Resep') + ' · ' + (A.vName(v) + ' ' + A.vSub(v)).replace(/^\s+|\s+$/g, '');
+function dupUpd() {
+  const ids = Object.keys(S.dp2.sel).filter(k => S.dp2.sel[k]), n = ids.length, b = $('#dpbtn'); if (b) b.disabled = !n;
+  const nn = $('#dpn'); if (nn) nn.textContent = n ? n + ' varian dipilih' : 'Belum ada varian dipilih';
+  const x = $('#dpx'); if (x) x.textContent = n ? 'Contoh nama: ' + dupName(A.vById(ids[0])) : '';
 }
 const unitAlt = mm => { // satuan kecil: dari Data Master, atau bawaan untuk kg dan Liter
   if (!mm) return null; if (mm.satuan_kecil && Number(mm.faktor_kecil) > 1) return {n: mm.satuan_kecil, f: Number(mm.faktor_kecil)};
@@ -161,7 +180,7 @@ function rfSheet() {
     '<label>Jenis<select class="inp" data-rf="jenis"><option value="batch"' + (f.jenis === 'batch' ? ' selected' : '') + '>Batch (produksi sendiri)</option><option value="repack"' + (f.jenis === 'repack' ? ' selected' : '') + '>Repack (kemas ulang)</option></select></label>' +
     '<div class="row2"><div style="flex:1"><label>Hasil standar per batch (unit)<input class="inp" data-rf="hasil_standar" inputmode="decimal" value="' + esc(f.hasil_standar) + '"></label></div><div style="flex:1"><label>Tenaga kerja per batch (Rp)<input class="inp" data-rf="tenaga_kerja" inputmode="decimal" value="' + esc(f.tenaga_kerja) + '"></label></div></div>' +
     '<b>Bahan per batch</b>' + (f.items.map((i, n) => { const mm = mById(i.material_id); return '<div class="li"><div><b>' + esc(mm ? mm.nama : '(bahan dihapus)') + '</b><div class="muted">' + esc(mm ? fmtQ(i.qty, mm) : dec(i.qty)) + (mm && Number(mm.hpp_rata2) > 0 ? ' · ' + rp(i.qty * Number(mm.hpp_rata2)) : '') + '</div></div><button class="chip" data-act="ridel" data-i="' + n + '">Hapus</button></div>'; }).join('') || '<p class="muted">Belum ada bahan.</p>') +
-    adder + '<div id="rfv"></div><button class="btn pri" data-act="rsave">Simpan resep</button>' + (f.id ? '<button class="btn dan" data-act="rdel">Hapus resep</button>' : ''));
+    adder + '<div id="rfv"></div><button class="btn pri" data-act="rsave">Simpan resep</button>' + (f.id ? '<button class="btn sec" data-act="rdup" data-id="' + esc(f.id) + '">Duplikat resep ini</button><button class="btn dan" data-act="rdel">Hapus resep</button>' : ''));
   riRefresh(true); rfv();
 }
 function riRefresh(full) {
@@ -360,6 +379,9 @@ Object.assign(ACT, {
     } catch (e) { toast(e.message); }
   }),
   redit: el => redit(el.dataset.id),
+  rdup: el => dupSheet(el.dataset.id),
+  dpsave: () => { const ids = Object.keys(S.dp2.sel).filter(k => S.dp2.sel[k]); if (!ids.length) return toast('Pilih minimal satu varian tujuan');
+    return busy('Membuat salinan resep…', async () => { try { const r = await api('recipe.copy', {source_id: S.dp2.src, targets: ids.map(id => ({variant_id: id, nama: dupName(A.vById(id))}))}); await A.loadData(); closeSheet(); A.render(); toast(r.dibuat.length + ' resep dibuat. Periksa jumlah bahan tiap varian.'); } catch (e) { toast(e.message); } }); },
   riadd: () => {
     const mm = mById(S.ri.m), a = unitAlt(mm); let q = N(S.ri.q);
     if (!mm) return toast('Pilih bahan terlebih dahulu'); if (!(q > 0)) return toast('Isi jumlah lebih dari 0. Boleh desimal, mis. 0,5');
@@ -383,6 +405,8 @@ document.addEventListener('input', e => {
   if (d.pf) { S.pform[d.pf] = t.value; if (d.pf === 'recipe' || d.pf === 'batch') pv(); }
   else if (d.pd) { S.pd[d.pd] = t.value; pdv(); }
   else if (d.rf) { S.rf[d.rf] = t.value; if (d.rf === 'hasil_standar' || d.rf === 'tenaga_kerja' || d.rf === 'variant_id') rfv(); }
+  else if (d.dp) { S.dp2[d.dp] = t.value; dupUpd(); }
+  else if (d.dv) { S.dp2.sel[d.dv] = t.checked; dupUpd(); }
   else if (d.ri) { S.ri[d.ri] = t.value; if (d.ri === 'm') S.ri.u = 'main'; riRefresh(d.ri !== 'q'); }
   else if (d.rg) S[d.rg] = t.value;
 });
